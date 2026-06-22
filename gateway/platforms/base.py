@@ -2024,6 +2024,67 @@ def resolve_channel_skills(
     return None
 
 
+def resolve_channel_toolsets(
+    config_extra: dict,
+    channel_id: str,
+    parent_id: str | None = None,
+) -> list[str] | None:
+    """Resolve a per-channel toolset allowlist from platform config.
+
+    Looks up ``channel_toolsets`` in the platform's config section. When a
+    channel matches, the returned list REPLACES the platform default
+    ``enabled_toolsets`` for that channel's sessions -- i.e. it is a strict
+    allowlist enforced as infrastructure (tools outside the list are never
+    sent to the model), not a prompt instruction. This is how a low-privilege
+    mode like ``#tldr`` is denied terminal/write/execute tools.
+
+    Config format::
+
+        channel_toolsets:
+          - id: "1518563840814747793"     # Discord channel/forum/thread ID
+            toolsets: ["web", "file_read"]
+          - id: "D0ABCDE"
+            toolset: "web"                 # single string also accepted
+
+    Prefers an exact match on *channel_id*; falls back to *parent_id* (so forum
+    threads inherit the parent channel's allowlist).
+
+    Returns a deduplicated list of toolset names (order preserved), or None if
+    no binding matches (caller keeps the platform default).
+    """
+    bindings = config_extra.get("channel_toolsets") or []
+    if not isinstance(bindings, list) or not bindings:
+        return None
+    ids_to_check: set[str] = set()
+    if channel_id:
+        ids_to_check.add(str(channel_id))
+    if parent_id:
+        ids_to_check.add(str(parent_id))
+    if not ids_to_check:
+        return None
+    for entry in bindings:
+        if not isinstance(entry, dict):
+            continue
+        entry_id = str(entry.get("id", ""))
+        if entry_id in ids_to_check:
+            toolsets = entry.get("toolsets")
+            if toolsets is None:
+                toolsets = entry.get("toolset")
+            if isinstance(toolsets, str):
+                s = toolsets.strip()
+                return [s] if s else None
+            if isinstance(toolsets, list) and toolsets:
+                seen: list[str] = []
+                for name in toolsets:
+                    if not isinstance(name, str):
+                        continue
+                    nm = name.strip()
+                    if nm and nm not in seen:
+                        seen.append(nm)
+                return seen or None
+    return None
+
+
 def _strip_media_directives(text: str) -> str:
     """Strip internal delivery directives ([[audio_as_voice]], [[as_document]],
     MEDIA:<path>) so they never render as visible text.

@@ -11163,6 +11163,17 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
 
             from hermes_cli.tools_config import _get_platform_tools
             enabled_toolsets = sorted(_get_platform_tools(user_config, platform_key))
+            # Per-channel toolset allowlist (e.g. #tldr = web+file_read only).
+            # Replaces the platform default so denied tools are never sent to
+            # the model -- infrastructure enforcement, not a prompt instruction.
+            from gateway.platforms.base import resolve_channel_toolsets
+            _channel_toolsets = resolve_channel_toolsets(
+                user_config.get(platform_key) or {},
+                source.chat_id,
+                source.parent_chat_id,
+            )
+            if _channel_toolsets is not None:
+                enabled_toolsets = sorted(_channel_toolsets)
             agent_cfg = user_config.get("agent") or {}
             disabled_toolsets = agent_cfg.get("disabled_toolsets") or None
 
@@ -14430,6 +14441,17 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
 
         from hermes_cli.tools_config import _get_platform_tools
         enabled_toolsets = sorted(_get_platform_tools(user_config, platform_key))
+        # Per-channel toolset allowlist (e.g. #tldr = web+file_read only).
+        # Replaces the platform default so denied tools are never sent to the
+        # model -- infrastructure enforcement, not a prompt instruction.
+        from gateway.platforms.base import resolve_channel_toolsets
+        _channel_toolsets = resolve_channel_toolsets(
+            user_config.get(platform_key) or {},
+            source.chat_id,
+            source.parent_chat_id,
+        )
+        if _channel_toolsets is not None:
+            enabled_toolsets = sorted(_channel_toolsets)
         agent_cfg_local = user_config.get("agent") or {}
         disabled_toolsets = agent_cfg_local.get("disabled_toolsets") or None
 

@@ -192,7 +192,13 @@ TOOLSETS = {
         "tools": ["read_file", "write_file", "patch", "search_files"],
         "includes": []
     },
-    
+
+    "file_read": {
+        "description": "Read-only file access: read and search files, no write/patch (for low-privilege modes)",
+        "tools": ["read_file", "search_files"],
+        "includes": []
+    },
+
     "tts": {
         "description": "Text-to-speech: convert text to audio with Edge TTS (free), ElevenLabs, OpenAI, or xAI",
         "tools": ["text_to_speech"],
