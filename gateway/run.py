@@ -126,14 +126,9 @@ _GATEWAY_RATE_LIMIT_RE = re.compile(
     re.IGNORECASE,
 )
 
-_GATEWAY_SECRET_PATTERNS = (
-    re.compile(r"\bsk-[A-Za-z0-9][A-Za-z0-9_\-]{12,}\b"),
-    re.compile(r"\bgh[pousr]_[A-Za-z0-9_]{20,}\b"),
-    re.compile(r"\bxox[baprs]-[A-Za-z0-9\-]{20,}\b"),
-    re.compile(r"\bhf_[A-Za-z0-9]{20,}\b"),
-    re.compile(r"\bglpat-[A-Za-z0-9_\-]{20,}\b"),
-    re.compile(r"(?i)\b(Bearer\s+)[A-Za-z0-9._\-]{20,}\b"),
-)
+# Secret-egress patterns live in gateway.secret_egress (single source of truth,
+# shared with the per-platform delivery path in gateway/platforms/base.py).
+from gateway.secret_egress import GATEWAY_SECRET_PATTERNS as _GATEWAY_SECRET_PATTERNS
 
 
 def _ensure_windows_gateway_venv_imports() -> None:

@@ -4592,6 +4592,14 @@ class BasePlatformAdapter(ABC):
                         )
                         text_content = _recovered
 
+                # Secret-egress redaction: scrub token-shaped strings from the
+                # final reply before it leaves the gateway on ANY platform
+                # (text, TTS, captions). Defense-in-depth -- not a substitute
+                # for keeping secrets out of the agent's reach.
+                if text_content:
+                    from gateway.secret_egress import redact_secrets
+                    text_content = redact_secrets(text_content)
+
                 # Final user-visible content (text, TTS, media, files) gets
                 # the existing notify=True marker. Clone once so typing/status
                 # metadata stays unmarked and progress bubbles remain
