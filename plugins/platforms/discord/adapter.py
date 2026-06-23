@@ -4008,6 +4008,11 @@ class DiscordAdapter(BasePlatformAdapter):
         # For forum threads, inherit the parent forum's topic.
         chat_topic = self._get_effective_topic(interaction.channel, is_thread=is_thread)
 
+        # Thread parent channel id — needed so per-channel bindings (toolsets,
+        # skills, prompts, the /build write-gate) resolve via parent fallback for
+        # slash commands invoked inside a thread, matching the on_message path.
+        parent_id = str(getattr(getattr(interaction, "channel", None), "parent_id", "") or "")
+
         source = self.build_source(
             chat_id=str(interaction.channel_id),
             chat_name=chat_name,
@@ -4016,11 +4021,11 @@ class DiscordAdapter(BasePlatformAdapter):
             user_name=interaction.user.display_name,
             thread_id=thread_id,
             chat_topic=chat_topic,
+            parent_chat_id=parent_id or None,
         )
 
         msg_type = MessageType.COMMAND if text.startswith("/") else MessageType.TEXT
         channel_id = str(interaction.channel_id)
-        parent_id = str(getattr(getattr(interaction, "channel", None), "parent_id", "") or "")
         return MessageEvent(
             text=text,
             message_type=msg_type,
