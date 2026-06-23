@@ -8053,7 +8053,25 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             )
 
         if canonical == "build":
-            return await self._handle_build_command(event, source, _quick_key)
+            _build_task = event.get_command_args().strip()
+            _build_reply = await self._handle_build_command(event, source, _quick_key)
+            # Arm-only (no task text) OR arming rejected (no build mode in this
+            # channel) -> just return the confirmation/notice.
+            if not _build_task or _quick_key not in self._coding_build_pending:
+                return _build_reply
+            # `/build <task>`: elevation is armed; run the task immediately as a
+            # normal user turn (it consumes the one-shot elevation). Strip the
+            # command so downstream treats it as plain text and fall through to
+            # the agent path (mirrors /steer). Null command/canonical so no
+            # later command/quick-command handler matches "build" on the way
+            # down.
+            try:
+                event.text = _build_task
+            except Exception:
+                pass
+            command = None
+            canonical = None
+            # Do NOT return — fall through to _handle_message_with_agent below.
 
         if canonical == "topic":
             return await self._handle_topic_command(event)
