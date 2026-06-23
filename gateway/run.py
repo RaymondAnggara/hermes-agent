@@ -1947,6 +1947,10 @@ _INTERRUPT_REASON_SSE_DISCONNECT = "SSE client disconnected"
 _INTERRUPT_REASON_GATEWAY_SHUTDOWN = "Gateway shutting down"
 _INTERRUPT_REASON_GATEWAY_RESTART = "Gateway restarting"
 
+# Phase 2 #coding write-gate: a !build arm lapses if no task consumes it within
+# this many seconds, so a forgotten arm can't silently elevate a later task.
+_CODING_BUILD_TTL = 600.0
+
 _CONTROL_INTERRUPT_MESSAGES = frozenset(
     {
         _INTERRUPT_REASON_STOP.lower(),
@@ -2613,6 +2617,19 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         # Track pending exec approvals per session
         # Key: session_key, Value: {"command": str, "pattern_key": str, ...}
         self._pending_approvals: Dict[str, Dict[str, Any]] = {}
+
+        # Phase 2 (#coding write-gate): one-shot "build mode" elevations armed
+        # by the operator's !build command. Key: session_key, Value:
+        # {"toolsets": [...], "max_turns": int|None}. The next agent turn in
+        # that session swaps the channel's read-only allowlist for this
+        # elevated (write + terminal) set, then POPS the entry so the elevation
+        # lasts exactly one task and reverts to read-only. Because
+        # enabled_toolsets is part of _agent_config_signature, swapping it
+        # rebuilds the cached agent at a clean session boundary rather than
+        # mutating a live conversation (invariant #1). Arms expire after
+        # _CODING_BUILD_TTL seconds so a forgotten arm can't silently elevate a
+        # much-later task.
+        self._coding_build_pending: Dict[str, Dict[str, Any]] = {}
 
         # Track platforms that failed to connect for background reconnection.
         # Key: Platform enum, Value: {"config": platform_config, "attempts": int, "next_retry": float}
@@ -8035,9 +8052,12 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 execute=_do_reset,
             )
 
+        if canonical == "build":
+            return await self._handle_build_command(event, source, _quick_key)
+
         if canonical == "topic":
             return await self._handle_topic_command(event)
-        
+
         if canonical == "help":
             return await self._handle_help_command(event)
 
@@ -10300,6 +10320,82 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             )
         return f"⛔ /{canonical_cmd} is admin-only here. {suffix}"
 
+    async def _handle_build_command(
+        self, event: MessageEvent, source: SessionSource, session_key: str
+    ) -> str:
+        """Arm a one-shot write/build elevation for the next task (Phase 2 #coding).
+
+        ``#coding`` runs read-only (plan/research) by default. ``!build`` is the
+        per-task operator confirm that unlocks the channel's ``build_toolsets``
+        (write + terminal, executed in the docker sandbox) for *exactly one*
+        following task, then reverts to read-only automatically. The arm is
+        recorded against this ``session_key`` and consumed at the agent-build
+        site; because ``enabled_toolsets`` is part of the agent cache signature,
+        the elevated turn rebuilds the agent at a clean session boundary rather
+        than mutating a live conversation (invariant #1).
+
+        Operator-gating is enforced upstream by ``_check_slash_access`` in the
+        dispatch path. A channel with no ``build_toolsets`` binding has no build
+        mode, so this command is inert there.
+        """
+        from gateway.platforms.base import (
+            resolve_channel_build_toolsets,
+            resolve_channel_build_max_turns,
+            resolve_channel_build_workspace,
+        )
+
+        user_config = _load_gateway_config()
+        platform_key = _platform_config_key(source.platform)
+        platform_cfg = user_config.get(platform_key) or {}
+
+        build_toolsets = resolve_channel_build_toolsets(
+            platform_cfg, source.chat_id, source.parent_chat_id
+        )
+        if not build_toolsets:
+            return (
+                "🔒 This channel has no build mode. `!build` only works in a "
+                "channel whose config defines `build_toolsets` (e.g. #coding)."
+            )
+
+        build_max_turns = resolve_channel_build_max_turns(
+            platform_cfg, source.chat_id, source.parent_chat_id
+        )
+        build_workspace = resolve_channel_build_workspace(
+            platform_cfg, source.chat_id, source.parent_chat_id
+        )
+        self._coding_build_pending[session_key] = {
+            "toolsets": list(build_toolsets),
+            "max_turns": build_max_turns,
+            "workspace": build_workspace,
+            "armed_at": time.time(),
+        }
+        logger.warning(
+            "Build mode ARMED for session %s by user %s (toolsets=%s, max_turns=%s)",
+            session_key,
+            getattr(source, "user_id", "?"),
+            build_toolsets,
+            build_max_turns,
+        )
+        turns_note = f" up to {build_max_turns} turns," if build_max_turns else ""
+        if build_workspace:
+            jail_note = (
+                f"Writes are jailed to `{build_workspace}` (anything outside is "
+                "denied), and terminal runs in the sandbox."
+            )
+        else:
+            jail_note = (
+                "⚠️ No `build_workspace` is configured for this channel, so file "
+                "writes are NOT jailed to a repo — configure one before relying "
+                "on containment."
+            )
+        return (
+            "🔓 **Build mode armed** for your *next* task in this channel.\n"
+            f"It will run with write + terminal tools ({', '.join(build_toolsets)}),"
+            f"{turns_note} then revert to read-only.\n"
+            f"{jail_note}\n"
+            "Send your coding task now, or `/stop` / a non-task message to let it lapse."
+        )
+
 
 
 
@@ -11184,6 +11280,18 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             )
             if _ch_turns is not None:
                 max_iterations = _ch_turns
+            # Phase 2 #coding write-gate: consume a one-shot !build elevation
+            # (operator-armed) so this turn runs with the write+terminal
+            # allowlist, then reverts. Popped here so it lasts exactly one task.
+            _build_elev = self._coding_build_pending.pop(
+                self._session_key_for_source(source), None
+            )
+            if _build_elev and (time.time() - _build_elev.get("armed_at", 0)) > _CODING_BUILD_TTL:
+                _build_elev = None  # arm went stale — lapse to the read-only default
+            if _build_elev:
+                enabled_toolsets = sorted(_build_elev.get("toolsets") or enabled_toolsets)
+                if _build_elev.get("max_turns"):
+                    max_iterations = _build_elev["max_turns"]
             reasoning_config = self._resolve_session_reasoning_config(source=source)
             self._reasoning_config = reasoning_config
             self._service_tier = self._load_service_tier()
@@ -14457,6 +14565,16 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         )
         if _channel_toolsets is not None:
             enabled_toolsets = sorted(_channel_toolsets)
+        # Phase 2 #coding write-gate: consume a one-shot !build elevation
+        # (operator-armed) so this single turn runs with the write+terminal
+        # allowlist instead of the read-only default, then reverts. Popped here
+        # so the elevation applies to exactly one task; the build_max_turns it
+        # carries is applied at the max_iterations resolution site below.
+        _build_elev = self._coding_build_pending.pop(session_key, None) if session_key else None
+        if _build_elev and (time.time() - _build_elev.get("armed_at", 0)) > _CODING_BUILD_TTL:
+            _build_elev = None  # arm went stale — lapse to the read-only default
+        if _build_elev and _build_elev.get("toolsets"):
+            enabled_toolsets = sorted(_build_elev["toolsets"])
         agent_cfg_local = user_config.get("agent") or {}
         disabled_toolsets = agent_cfg_local.get("disabled_toolsets") or None
 
@@ -15285,6 +15403,11 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             )
             if _ch_turns is not None:
                 max_iterations = _ch_turns
+            # Elevated !build tasks get the higher build_max_turns cap (writing
+            # needs more iterations than read-only planning). _build_elev was
+            # popped at the toolset site above.
+            if _build_elev and _build_elev.get("max_turns"):
+                max_iterations = _build_elev["max_turns"]
 
             try:
                 model, runtime_kwargs = self._resolve_session_agent_runtime(
@@ -15534,6 +15657,32 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                         _cache[session_key] = (agent, _sig, _current_msg_count)
                         self._enforce_agent_cache_cap()
                 logger.debug("Created new agent for session %s (sig=%s)", session_key, _sig)
+
+            # Phase 2 build-mode write jail: confine this elevated session's file
+            # writes to the scratch repo. Registered against the agent's task_id
+            # (== session_id) so file_tools hard-deny any write resolving outside
+            # it, and terminal starts there. Read-only sessions register nothing,
+            # so they are unaffected; the jail simply persists harmlessly if the
+            # session later reverts to read-only (no write tools to enforce on).
+            if _build_elev and _build_elev.get("workspace"):
+                try:
+                    from tools.terminal_tool import (
+                        register_task_env_overrides,
+                        resolve_task_overrides,
+                    )
+                    _ws_jail = _build_elev["workspace"]
+                    _ov = dict(resolve_task_overrides(session_id))
+                    _ov.update({"write_jail_root": _ws_jail, "cwd": _ws_jail})
+                    register_task_env_overrides(session_id, _ov)
+                    logger.warning(
+                        "Build-mode write jail active for session %s -> %s",
+                        session_key, _ws_jail,
+                    )
+                except Exception:
+                    logger.warning(
+                        "Failed to register build-mode write jail for %s",
+                        session_key, exc_info=True,
+                    )
 
             # Per-message state — callbacks and reasoning config change every
             # turn and must not be baked into the cached agent constructor.

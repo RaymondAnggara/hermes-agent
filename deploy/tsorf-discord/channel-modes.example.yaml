@@ -1,0 +1,65 @@
+# Tsorf-Agent Discord channel-mode config — TRACKED MIRROR (reference only).
+#
+# This file documents the per-channel "mode" wiring that lives in the runtime
+# ~/.hermes/config.yaml (under `discord:`). The runtime file is NOT version
+# controlled; mirror authoritative changes here so they are reviewable and
+# rollback-able (deployment Principle #7). This file is reference only — it is
+# not loaded by the gateway. Apply changes by editing ~/.hermes/config.yaml and
+# running `hermes gateway restart`.
+#
+# Channel IDs (Meisttoresso guild): see prompt.md PROGRESS LOG.
+
+discord:
+  require_mention: true            # global default; #coding stays mention-gated
+  free_response_channels: '1518563840814747793'   # #tldr only (NOT #coding)
+
+  channel_prompts:
+    # #tldr (Phase 1) — faithful URL/doc summariser, fetch+read only.
+    '1518563840814747793': "...see runtime config..."
+    # #coding (Phase 2) — read-only plan/research by default; write only when
+    # the operator arms !build. Full text in runtime config; summary here.
+    '1518544267742679070': |-
+      #coding mode. Default read-only: research + PLAN, no write/terminal tools
+      (enforced by the allowlist). Roles via delegate_task (Researcher, Planner,
+      Coder) returning structured JSON. Read the target repo's AGENTS.md first.
+      Task contract: restate, severity rating, open questions (STOP if HIGH/
+      IRREVERSIBLE), plan; diff only in armed build mode. !build arms write+
+      terminal (sandboxed) for ONE next task, then reverts. Never self-merge main.
+
+  channel_toolsets:
+    # Phase 1: #tldr — strict read-only fetch+summarise, 5-turn cap.
+    - id: '1518563840814747793'
+      toolsets: [web, file_read]
+      max_turns: 5
+
+    # Phase 2: #coding — read-only plan/research default (web + file_read +
+    # delegation). `build_toolsets` is the elevated write+terminal set that the
+    # operator's `!build` command unlocks for exactly one task, executed in the
+    # docker sandbox, then reverted. `build_max_turns` is the higher cap for
+    # that elevated turn (writing needs more iterations than planning).
+    - id: '1518544267742679070'
+      toolsets: [web, file_read, delegation]
+      max_turns: 25
+      build_toolsets: [web, file, terminal, delegation]
+      build_max_turns: 60
+      # Host path the build session's file writes are HARD-jailed to (writes
+      # resolving outside are denied). Mount this same path identically into the
+      # docker terminal backend (terminal.docker_volumes) so the host jail root
+      # and the container terminal cwd are the same string. See below.
+      build_workspace: /Users/raymond/projects/Tsorf-Agent-Improvement
+
+# Execution sandbox mount for #coding build mode (runtime: terminal.docker_volumes).
+# Mount the scratch repo at an IDENTICAL container path so host-side file tools
+# and the container terminal agree on the path:
+#   terminal:
+#     backend: docker
+#     docker_volumes:
+#       - /Users/raymond/projects/Tsorf-Agent-Improvement:/Users/raymond/projects/Tsorf-Agent-Improvement
+#
+# Defense-in-depth (all sessions, not just build): file_tools also hard-blocks
+# writes to ~/.ssh, ~/.aws, ~/.gnupg, and the Hermes .env / config.yaml.
+
+  channel_skill_bindings:
+    # #coding auto-loads the coding-roles skill (role presets + JSON contract).
+    - id: '1518544267742679070'
+      skills: [coding-roles]

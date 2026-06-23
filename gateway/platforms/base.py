@@ -2124,6 +2124,136 @@ def resolve_channel_max_turns(
     return None
 
 
+def resolve_channel_build_toolsets(
+    config_extra: dict,
+    channel_id: str,
+    parent_id: str | None = None,
+) -> list[str] | None:
+    """Resolve a channel's *write-mode* toolset allowlist (Phase 2 ``#coding``).
+
+    A channel's ``channel_toolsets`` binding may carry an optional
+    ``build_toolsets`` field listing the elevated (write + terminal) toolsets
+    that an operator's ``!build`` arm command unlocks for a single task. The
+    default ``toolsets`` field stays read-only (plan/research); this is the
+    set the gateway swaps in for exactly one elevated turn, then reverts::
+
+        channel_toolsets:
+          - id: "1518544267742679070"          # #coding
+            toolsets: ["web", "file_read", "delegation"]   # read-only default
+            build_toolsets: ["web", "file", "terminal", "delegation"]
+            build_max_turns: 60
+
+    Returning the write set is a *capability grant*, not a prompt instruction —
+    the same strict-allowlist infrastructure path as ``resolve_channel_toolsets``.
+    A channel with no ``build_toolsets`` field has no build mode (returns None),
+    so ``!build`` is inert there.
+
+    Prefers an exact match on *channel_id*; falls back to *parent_id*.
+    Returns a deduplicated list (order preserved), or None when no binding
+    defines a build set.
+    """
+    bindings = config_extra.get("channel_toolsets") or []
+    if not isinstance(bindings, list) or not bindings:
+        return None
+    ids_to_check: set[str] = set()
+    if channel_id:
+        ids_to_check.add(str(channel_id))
+    if parent_id:
+        ids_to_check.add(str(parent_id))
+    if not ids_to_check:
+        return None
+    for entry in bindings:
+        if not isinstance(entry, dict):
+            continue
+        if str(entry.get("id", "")) not in ids_to_check:
+            continue
+        toolsets = entry.get("build_toolsets")
+        if isinstance(toolsets, str):
+            s = toolsets.strip()
+            return [s] if s else None
+        if isinstance(toolsets, list) and toolsets:
+            seen: list[str] = []
+            for name in toolsets:
+                if not isinstance(name, str):
+                    continue
+                nm = name.strip()
+                if nm and nm not in seen:
+                    seen.append(nm)
+            return seen or None
+        return None
+    return None
+
+
+def resolve_channel_build_workspace(
+    config_extra: dict,
+    channel_id: str,
+    parent_id: str | None = None,
+) -> str | None:
+    """Resolve the host path the channel's ``!build`` writes are jailed to.
+
+    Reads ``build_workspace`` from the channel's ``channel_toolsets`` binding —
+    the absolute host path of the scratch repo the elevated build session may
+    write into. The gateway registers this as a per-session ``write_jail_root``
+    so file tools hard-deny any write resolving outside it (Phase 2 write
+    containment). Returns the path string, or None when unset.
+    """
+    bindings = config_extra.get("channel_toolsets") or []
+    if not isinstance(bindings, list) or not bindings:
+        return None
+    ids_to_check: set[str] = set()
+    if channel_id:
+        ids_to_check.add(str(channel_id))
+    if parent_id:
+        ids_to_check.add(str(parent_id))
+    if not ids_to_check:
+        return None
+    for entry in bindings:
+        if not isinstance(entry, dict):
+            continue
+        if str(entry.get("id", "")) in ids_to_check:
+            ws = entry.get("build_workspace")
+            if isinstance(ws, str) and ws.strip():
+                return ws.strip()
+            return None
+    return None
+
+
+def resolve_channel_build_max_turns(
+    config_extra: dict,
+    channel_id: str,
+    parent_id: str | None = None,
+) -> int | None:
+    """Resolve the turn cap for a channel's elevated ``!build`` task.
+
+    Reads ``build_max_turns`` from the same ``channel_toolsets`` binding. A
+    write/build task legitimately needs more loop iterations than the
+    read-only default (plan-only modes need only a couple), so this is a
+    separate, higher cap applied only to the one elevated turn. Returns a
+    positive int, or None when unset (caller falls back to the global cap).
+    """
+    bindings = config_extra.get("channel_toolsets") or []
+    if not isinstance(bindings, list) or not bindings:
+        return None
+    ids_to_check: set[str] = set()
+    if channel_id:
+        ids_to_check.add(str(channel_id))
+    if parent_id:
+        ids_to_check.add(str(parent_id))
+    if not ids_to_check:
+        return None
+    for entry in bindings:
+        if not isinstance(entry, dict):
+            continue
+        if str(entry.get("id", "")) in ids_to_check:
+            mt = entry.get("build_max_turns")
+            if isinstance(mt, bool):
+                return None
+            if isinstance(mt, int) and mt > 0:
+                return mt
+            return None
+    return None
+
+
 def _strip_media_directives(text: str) -> str:
     """Strip internal delivery directives ([[audio_as_voice]], [[as_document]],
     MEDIA:<path>) so they never render as visible text.

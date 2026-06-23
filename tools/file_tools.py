@@ -398,7 +398,46 @@ def _check_sensitive_path(filepath: str, task_id: str = "default") -> str | None
             "Agent cannot modify security-sensitive configuration. "
             "Edit ~/.hermes/config.yaml directly or use 'hermes config' instead."
         )
+    # NOTE: credential stores (~/.ssh, ~/.aws, ~/.gnupg) and the Hermes .env are
+    # already hard-blocked on the write path by the canonical
+    # agent.file_safety.is_write_denied (enforced in ShellFileOperations.write_file
+    # / patch_replace). We deliberately do NOT re-implement that here to avoid two
+    # drifting copies of the secret denylist.
     return None
+
+
+def _check_write_jail(filepath: str, task_id: str = "default") -> str | None:
+    """Hard-deny writes outside a session's registered build workspace.
+
+    When a gateway build session registers a ``write_jail_root`` task override
+    (Phase 2 #coding ``!build``), every file write in that session must resolve
+    INSIDE that root. Unlike :func:`_path_resolution_warning` (a soft, relative-
+    path-only warning), this is a security boundary and **fails closed**: if a
+    jail is active and the target cannot be proven to be inside it, the write is
+    denied. Sessions with no ``write_jail_root`` (all read-only / non-build
+    sessions) are unaffected — the function returns ``None`` immediately.
+    """
+    try:
+        from tools.terminal_tool import resolve_task_overrides
+        jail = resolve_task_overrides(task_id).get("write_jail_root")
+    except Exception:
+        jail = None
+    if not jail:
+        return None  # No jail registered for this session — not a build session.
+    _deny = (
+        f"Refusing to write outside the build workspace: {filepath}\n"
+        "This build session is jailed to its scratch repo; pass a path inside it."
+    )
+    try:
+        root = Path(jail).expanduser().resolve()
+        target = _resolve_path_for_task(filepath, task_id)
+        target.relative_to(root)  # raises ValueError when target is outside root
+        return None
+    except ValueError:
+        return _deny
+    except Exception:
+        # Fail closed: an active jail we cannot evaluate must not permit a write.
+        return _deny
 
 
 def _get_container_mirror_prefix_for_task(task_id: str = "default") -> str | None:
@@ -1256,6 +1295,9 @@ def write_file_tool(path: str, content: str, task_id: str = "default",
     sensitive_err = _check_sensitive_path(path, task_id)
     if sensitive_err:
         return tool_error(sensitive_err)
+    jail_err = _check_write_jail(path, task_id)
+    if jail_err:
+        return tool_error(jail_err)
     if not cross_profile:
         cross_warning = _check_cross_profile_path(path, task_id)
         if cross_warning:
@@ -1359,6 +1401,9 @@ def patch_tool(mode: str = "replace", path: str = None, old_string: str = None,
         sensitive_err = _check_sensitive_path(_p, task_id)
         if sensitive_err:
             return tool_error(sensitive_err)
+        jail_err = _check_write_jail(_p, task_id)
+        if jail_err:
+            return tool_error(jail_err)
         if not cross_profile:
             cross_warning = _check_cross_profile_path(_p, task_id)
             if cross_warning:
