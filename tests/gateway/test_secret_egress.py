@@ -63,3 +63,34 @@ def test_secret_embedded_in_summary_is_scrubbed():
 def test_empty_and_none_safe():
     assert redact_secrets("") == ""
     assert redact_secrets(None) == ""
+
+
+# --- value-based (provider-agnostic) redaction ---------------------------
+
+def test_configured_value_redacted_regardless_of_shape():
+    """A provider key with NO recognizable prefix is still scrubbed by value --
+    this is what makes switching providers safe without pattern updates."""
+    env = {"SOME_NEW_PROVIDER_API_KEY": "weirdformat-no-known-prefix-9999xyz"}
+    out = redact_secrets("the model key is weirdformat-no-known-prefix-9999xyz here", environ=env)
+    assert "weirdformat-no-known-prefix-9999xyz" not in out
+    assert "[REDACTED]" in out
+
+
+def test_discord_bot_token_value_redacted():
+    env = {"DISCORD_BOT_TOKEN": "MzkyToKeNvaLue.Xq1234.abcDEFghiJKLmnoPQRstuVWXyz0"}
+    out = redact_secrets("token: MzkyToKeNvaLue.Xq1234.abcDEFghiJKLmnoPQRstuVWXyz0", environ=env)
+    assert "MzkyToKeNvaLue" not in out
+    assert "[REDACTED]" in out
+
+
+def test_short_value_is_not_redacted():
+    """A short value must not be scrubbed -- would corrupt ordinary text."""
+    env = {"X_TOKEN": "yes"}
+    assert redact_secrets("the answer is yes indeed", environ=env) == "the answer is yes indeed"
+
+
+def test_non_secret_env_name_is_not_redacted():
+    """Only secret-NAMED env vars are treated as values to scrub."""
+    env = {"HERMES_HOME": "/Users/someone/.hermes/private"}
+    text = "files live under /Users/someone/.hermes/private today"
+    assert redact_secrets(text, environ=env) == text

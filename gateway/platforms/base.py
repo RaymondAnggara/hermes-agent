@@ -2085,6 +2085,45 @@ def resolve_channel_toolsets(
     return None
 
 
+def resolve_channel_max_turns(
+    config_extra: dict,
+    channel_id: str,
+    parent_id: str | None = None,
+) -> int | None:
+    """Resolve a per-channel turn (iteration) cap from the ``channel_toolsets``
+    binding for this channel.
+
+    A ``max_turns`` field on a channel's binding caps how many agent loop
+    iterations a task in that channel may run, well below the global
+    ``agent.max_turns``. This bounds cost and runaway loops for low-complexity
+    modes (e.g. ``#tldr`` only needs a couple of turns to fetch + summarize).
+
+    Returns a positive int, or None when the channel has no cap configured.
+    """
+    bindings = config_extra.get("channel_toolsets") or []
+    if not isinstance(bindings, list) or not bindings:
+        return None
+    ids_to_check: set[str] = set()
+    if channel_id:
+        ids_to_check.add(str(channel_id))
+    if parent_id:
+        ids_to_check.add(str(parent_id))
+    if not ids_to_check:
+        return None
+    for entry in bindings:
+        if not isinstance(entry, dict):
+            continue
+        if str(entry.get("id", "")) in ids_to_check:
+            mt = entry.get("max_turns")
+            # bool is an int subclass -- reject True/False explicitly.
+            if isinstance(mt, bool):
+                return None
+            if isinstance(mt, int) and mt > 0:
+                return mt
+            return None
+    return None
+
+
 def _strip_media_directives(text: str) -> str:
     """Strip internal delivery directives ([[audio_as_voice]], [[as_document]],
     MEDIA:<path>) so they never render as visible text.

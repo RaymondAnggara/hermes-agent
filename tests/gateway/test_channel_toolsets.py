@@ -6,7 +6,7 @@ low-privilege channel like ``#tldr`` cannot reach terminal/write/execute tools
 even if instructed to. They are not change-detector snapshots.
 """
 
-from gateway.platforms.base import resolve_channel_toolsets
+from gateway.platforms.base import resolve_channel_toolsets, resolve_channel_max_turns
 from toolsets import resolve_toolset, TOOLSETS
 
 TLDR_ID = "1518563840814747793"
@@ -83,3 +83,27 @@ def test_full_discord_toolset_would_have_been_dangerous():
     the dangerous tools -- proving the override is what removes them."""
     full = set(resolve_toolset("hermes-discord"))
     assert FORBIDDEN_IN_TLDR & full  # the platform default is privileged
+
+
+# --- per-channel turn cap -------------------------------------------------
+
+def test_max_turns_resolved_from_binding():
+    bindings = [{"id": TLDR_ID, "toolsets": ["web"], "max_turns": 5}]
+    assert resolve_channel_max_turns(_cfg(bindings), TLDR_ID) == 5
+
+
+def test_max_turns_none_when_absent():
+    bindings = [{"id": TLDR_ID, "toolsets": ["web"]}]
+    assert resolve_channel_max_turns(_cfg(bindings), TLDR_ID) is None
+
+
+def test_max_turns_parent_fallback():
+    bindings = [{"id": PARENT_ID, "toolsets": ["web"], "max_turns": 3}]
+    assert resolve_channel_max_turns(_cfg(bindings), "999thread", PARENT_ID) == 3
+
+
+def test_max_turns_rejects_bool_and_nonpositive():
+    # bool is an int subclass -- must not be accepted as a turn count.
+    assert resolve_channel_max_turns(_cfg([{"id": TLDR_ID, "max_turns": True}]), TLDR_ID) is None
+    assert resolve_channel_max_turns(_cfg([{"id": TLDR_ID, "max_turns": 0}]), TLDR_ID) is None
+    assert resolve_channel_max_turns(_cfg([{"id": TLDR_ID, "max_turns": -1}]), TLDR_ID) is None

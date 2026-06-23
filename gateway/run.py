@@ -11174,6 +11174,16 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
 
             pr = self._provider_routing
             max_iterations = _current_max_iterations()
+            # Per-channel turn cap (e.g. #tldr = 5) bounds cost/loops below the
+            # global agent.max_turns for low-complexity modes.
+            from gateway.platforms.base import resolve_channel_max_turns
+            _ch_turns = resolve_channel_max_turns(
+                user_config.get(platform_key) or {},
+                source.chat_id,
+                source.parent_chat_id,
+            )
+            if _ch_turns is not None:
+                max_iterations = _ch_turns
             reasoning_config = self._resolve_session_reasoning_config(source=source)
             self._reasoning_config = reasoning_config
             self._service_tier = self._load_service_tier()
@@ -15265,6 +15275,16 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 combined_ephemeral = (combined_ephemeral + "\n\n" + self._ephemeral_system_prompt).strip()
 
             max_iterations = _current_max_iterations()
+            # Per-channel turn cap (e.g. #tldr = 5) bounds cost/loops below the
+            # global agent.max_turns for low-complexity modes.
+            from gateway.platforms.base import resolve_channel_max_turns
+            _ch_turns = resolve_channel_max_turns(
+                user_config.get(platform_key) or {},
+                source.chat_id,
+                source.parent_chat_id,
+            )
+            if _ch_turns is not None:
+                max_iterations = _ch_turns
 
             try:
                 model, runtime_kwargs = self._resolve_session_agent_runtime(
