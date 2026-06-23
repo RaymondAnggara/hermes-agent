@@ -10325,7 +10325,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
     ) -> str:
         """Arm a one-shot write/build elevation for the next task (Phase 2 #coding).
 
-        ``#coding`` runs read-only (plan/research) by default. ``!build`` is the
+        ``#coding`` runs read-only (plan/research) by default. ``/build`` is the
         per-task operator confirm that unlocks the channel's ``build_toolsets``
         (write + terminal, executed in the docker sandbox) for *exactly one*
         following task, then reverts to read-only automatically. The arm is
@@ -10353,7 +10353,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         )
         if not build_toolsets:
             return (
-                "🔒 This channel has no build mode. `!build` only works in a "
+                "🔒 This channel has no build mode. `/build` only works in a "
                 "channel whose config defines `build_toolsets` (e.g. #coding)."
             )
 

@@ -40,7 +40,7 @@ def test_read_only_is_the_default(skill_text):
     # The default deliverable must be a plan, and write/terminal must be gated.
     assert "read-only" in skill_text.lower()
     assert "build mode" in skill_text.lower()
-    assert "!build" in skill_text
+    assert "/build" in skill_text
 
 
 def test_structured_json_contract_present(skill_text):

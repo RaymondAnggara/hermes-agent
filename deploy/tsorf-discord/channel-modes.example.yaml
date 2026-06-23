@@ -17,13 +17,13 @@ discord:
     # #tldr (Phase 1) — faithful URL/doc summariser, fetch+read only.
     '1518563840814747793': "...see runtime config..."
     # #coding (Phase 2) — read-only plan/research by default; write only when
-    # the operator arms !build. Full text in runtime config; summary here.
+    # the operator arms /build. Full text in runtime config; summary here.
     '1518544267742679070': |-
       #coding mode. Default read-only: research + PLAN, no write/terminal tools
       (enforced by the allowlist). Roles via delegate_task (Researcher, Planner,
       Coder) returning structured JSON. Read the target repo's AGENTS.md first.
       Task contract: restate, severity rating, open questions (STOP if HIGH/
-      IRREVERSIBLE), plan; diff only in armed build mode. !build arms write+
+      IRREVERSIBLE), plan; diff only in armed build mode. /build arms write+
       terminal (sandboxed) for ONE next task, then reverts. Never self-merge main.
 
   channel_toolsets:
@@ -34,7 +34,7 @@ discord:
 
     # Phase 2: #coding — read-only plan/research default (web + file_read +
     # delegation). `build_toolsets` is the elevated write+terminal set that the
-    # operator's `!build` command unlocks for exactly one task, executed in the
+    # operator's `/build` command unlocks for exactly one task, executed in the
     # docker sandbox, then reverted. `build_max_turns` is the higher cap for
     # that elevated turn (writing needs more iterations than planning).
     - id: '1518544267742679070'
@@ -42,22 +42,24 @@ discord:
       max_turns: 25
       build_toolsets: [web, file, terminal, delegation]
       build_max_turns: 60
-      # Host path the build session's file writes are HARD-jailed to (writes
-      # resolving outside are denied). Mount this same path identically into the
-      # docker terminal backend (terminal.docker_volumes) so the host jail root
-      # and the container terminal cwd are the same string. See below.
-      build_workspace: /Users/raymond/projects/Tsorf-Agent-Improvement
+      # CONTAINER path the build session's file writes are HARD-jailed to (writes
+      # resolving outside are denied). File tools AND terminal run inside the
+      # docker container, so this is the container-side mount target — NOT a
+      # /Users host path (the docker backend rejects host-prefixed cwds → /root).
+      build_workspace: /projects/Tsorf-Agent-Improvement
 
 # Execution sandbox mount for #coding build mode (runtime: terminal.docker_volumes).
-# Mount the scratch repo at an IDENTICAL container path so host-side file tools
-# and the container terminal agree on the path:
+# Mount the host scratch repo to the container path used as build_workspace:
 #   terminal:
 #     backend: docker
 #     docker_volumes:
-#       - /Users/raymond/projects/Tsorf-Agent-Improvement:/Users/raymond/projects/Tsorf-Agent-Improvement
+#       - /Users/raymond/projects/Tsorf-Agent-Improvement:/projects/Tsorf-Agent-Improvement
+# The agent uses the container path (/projects/...) for all reads/writes/terminal.
+# NOTE: writes/terminal stay on the ORCHESTRATOR (jailed) session; subagents are
+# read-only research only (a delegated writer would not inherit the jail).
 #
-# Defense-in-depth (all sessions, not just build): file_tools also hard-blocks
-# writes to ~/.ssh, ~/.aws, ~/.gnupg, and the Hermes .env / config.yaml.
+# Defense-in-depth (all sessions): the canonical agent.file_safety.is_write_denied
+# hard-blocks writes to ~/.ssh, ~/.aws, ~/.gnupg, and the Hermes .env / config.yaml.
 
   channel_skill_bindings:
     # #coding auto-loads the coding-roles skill (role presets + JSON contract).
