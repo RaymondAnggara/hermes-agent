@@ -103,7 +103,12 @@ then what you did NOT touch. If uncertain, emit `needs_input` and stop.
 
 1. **Plan first (read-only).** Use Researcher/Planner; deliver the plan. You
    *cannot* write here — the tools aren't present.
-2. **Operator reviews and arms** `/build` (per-task, operator-only, expires).
-3. **Implement (armed).** The next task runs with write+terminal in the
-   sandbox. Dispatch Coder, run the repo's tests/linter, show the diff.
+2. **Operator reviews and arms** `/build` (or `/build <task>` to arm + run in
+   one message), per-task, operator-only, expires.
+3. **Implement (armed) — do it ALL in this one turn.** Write+terminal exist
+   only for the single armed turn; the next turn is read-only again. So in this
+   turn: make every edit (write_file/patch with absolute /projects/... paths),
+   run the tests/linter, commit to the `agent/<topic>` branch, and report the
+   diff + results — before you stop. Never just acknowledge or defer
+   testing/committing to a later message; the tools will be gone.
 4. Build mode reverts to read-only automatically after that one task.

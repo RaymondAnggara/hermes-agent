@@ -96,7 +96,7 @@ COMMAND_REGISTRY: list[CommandDef] = [
                cli_only=True, aliases=("snap",), args_hint="[create|restore <id>|prune]"),
     CommandDef("stop", "Kill all running background processes", "Session"),
     CommandDef("build", "Arm write+terminal for your next coding task (operator-gated)",
-               "Session", gateway_only=True),
+               "Session", gateway_only=True, args_hint="<task>"),
     CommandDef("approve", "Approve a pending dangerous command", "Session",
                gateway_only=True, args_hint="[session|always]"),
     CommandDef("deny", "Deny a pending dangerous command", "Session",
