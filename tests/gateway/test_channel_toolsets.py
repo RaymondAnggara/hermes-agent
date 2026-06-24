@@ -57,6 +57,17 @@ def test_no_binding_returns_none_keeps_platform_default():
     assert resolve_channel_toolsets({"channel_toolsets": []}, TLDR_ID) is None
 
 
+def test_explicit_no_tools_allowlist_returns_empty_list():
+    """An explicit empty allowlist (#general pure chat) returns [] -- distinct
+    from None. [] means "send ZERO tools to the model"; None means "no binding,
+    keep the platform default". Both the empty-list and "none" forms work."""
+    GENERAL_ID = "1517149565608792096"
+    assert resolve_channel_toolsets(_cfg([{"id": GENERAL_ID, "toolsets": []}]), GENERAL_ID) == []
+    assert resolve_channel_toolsets(_cfg([{"id": GENERAL_ID, "toolset": "none"}]), GENERAL_ID) == []
+    # A non-matching binding still yields None (default), not [].
+    assert resolve_channel_toolsets(_cfg([{"id": "other", "toolsets": []}]), GENERAL_ID) is None
+
+
 def test_dedup_preserves_order():
     bindings = [{"id": TLDR_ID, "toolsets": ["web", "web", "file_read"]}]
     assert resolve_channel_toolsets(_cfg(bindings), TLDR_ID) == ["web", "file_read"]

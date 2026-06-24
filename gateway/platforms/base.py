@@ -2045,12 +2045,18 @@ def resolve_channel_toolsets(
             toolsets: ["web", "file_read"]
           - id: "D0ABCDE"
             toolset: "web"                 # single string also accepted
+          - id: "1517149565608792096"     # a pure-chat channel (#general)
+            toolsets: []                   # explicit no-tools allowlist
+            # (toolset: "none" is equivalent)
 
     Prefers an exact match on *channel_id*; falls back to *parent_id* (so forum
     threads inherit the parent channel's allowlist).
 
-    Returns a deduplicated list of toolset names (order preserved), or None if
-    no binding matches (caller keeps the platform default).
+    Returns a deduplicated list of toolset names (order preserved). Returns an
+    empty list when a matched binding declares an explicit no-tools allowlist
+    (``toolsets: []`` or ``toolset: "none"``) -- the caller then sends ZERO
+    tools to the model (pure chat), distinct from None which means "no binding
+    matched, keep the platform default".
     """
     bindings = config_extra.get("channel_toolsets") or []
     if not isinstance(bindings, list) or not bindings:
@@ -2072,8 +2078,12 @@ def resolve_channel_toolsets(
                 toolsets = entry.get("toolset")
             if isinstance(toolsets, str):
                 s = toolsets.strip()
+                if s.lower() == "none":
+                    return []  # explicit empty allowlist: no optional tools
                 return [s] if s else None
-            if isinstance(toolsets, list) and toolsets:
+            if isinstance(toolsets, list):
+                if not toolsets:
+                    return []  # explicit empty allowlist: no optional tools
                 seen: list[str] = []
                 for name in toolsets:
                     if not isinstance(name, str):
