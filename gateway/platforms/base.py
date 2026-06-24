@@ -2134,6 +2134,53 @@ def resolve_channel_max_turns(
     return None
 
 
+def resolve_channel_memory_disabled(
+    config_extra: dict,
+    channel_id: str,
+    parent_id: str | None = None,
+) -> bool:
+    """Resolve whether a channel's sessions must run with persistent memory
+    DISABLED (no MEMORY.md / USER.md / external-provider block in the system
+    prompt).
+
+    A ``memory: false`` field on a channel's ``channel_toolsets`` binding makes
+    that channel's sessions truly read-side ephemeral: the agent is built with
+    ``skip_memory=True`` so the global memory snapshot is never *loaded* into the
+    system prompt -- not merely hidden behind a missing tool. This closes the
+    Phase 3 finding that a pure-chat channel (``#general``) with no memory tool
+    still received the injected global memory context, which a prompt-extraction
+    ("repeat everything above") could echo back::
+
+        channel_toolsets:
+          - id: "1517149565608792096"     # #general
+            toolsets: []                   # no tools (pure chat)
+            memory: false                  # and no memory context either
+
+    This is infrastructure (the data is not loaded), not a prompt instruction --
+    so it holds even under prompt injection. Default is False (memory follows
+    the global ``memory`` config) when the field is absent or no binding matches.
+    Only an explicit ``memory: false`` disables it; any other value is ignored.
+    """
+    bindings = config_extra.get("channel_toolsets") or []
+    if not isinstance(bindings, list) or not bindings:
+        return False
+    ids_to_check: set[str] = set()
+    if channel_id:
+        ids_to_check.add(str(channel_id))
+    if parent_id:
+        ids_to_check.add(str(parent_id))
+    if not ids_to_check:
+        return False
+    for entry in bindings:
+        if not isinstance(entry, dict):
+            continue
+        if str(entry.get("id", "")) in ids_to_check:
+            # Only an explicit boolean False disables memory. Truthy/absent/
+            # non-bool values leave the global memory config in force.
+            return entry.get("memory") is False
+    return False
+
+
 def resolve_channel_build_toolsets(
     config_extra: dict,
     channel_id: str,

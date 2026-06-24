@@ -5267,6 +5267,10 @@ class DiscordAdapter(BasePlatformAdapter):
         # no_thread_channels: channels where bot responds directly without thread.
         auto_threaded_channel = None
         if not is_thread and not isinstance(message.channel, discord.DMChannel):
+            # no_thread_channels / auto_thread are config.yaml settings bridged to
+            # these env vars at load time (env wins over config; see the discord
+            # env-bridge). A channel listed in no_thread_channels (e.g. #general)
+            # is the per-channel auto-thread off-switch -> inline replies.
             no_thread_channels_raw = os.getenv("DISCORD_NO_THREAD_CHANNELS", "")
             no_thread_channels = {ch.strip() for ch in no_thread_channels_raw.split(",") if ch.strip()}
             skip_thread = bool(channel_ids & no_thread_channels) or is_free_channel
@@ -5280,6 +5284,18 @@ class DiscordAdapter(BasePlatformAdapter):
                     thread_id = str(thread.id)
                     auto_threaded_channel = thread
                     self._threads.mark(thread_id)
+                else:
+                    # Thread creation failed (already logged in
+                    # _auto_create_thread). Make the fallback explicit rather
+                    # than silently dropping or behaving as if nothing happened:
+                    # we proceed to handle the message inline in the origin
+                    # channel so the user still gets a reply (Phase 3 finding —
+                    # auto_thread silent non-response).
+                    logger.warning(
+                        "[%s] Auto-thread failed for channel %s; replying inline instead.",
+                        self.name,
+                        message.channel.id,
+                    )
 
         referenced_attachments = []
         reference = getattr(message, "reference", None)

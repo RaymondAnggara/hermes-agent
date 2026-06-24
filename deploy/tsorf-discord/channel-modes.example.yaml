@@ -12,6 +12,12 @@
 discord:
   require_mention: true            # global default; #coding stays mention-gated
   free_response_channels: '1518563840814747793'   # #tldr only (NOT #coding)
+  # Phase 4: per-channel auto-thread off-switch. #general is open chat where a
+  # thread per @mention is the wrong fit and, under rapid mentions, caused
+  # silent non-response (Phase 3 finding). Listing it here makes the bot reply
+  # INLINE in #general instead of spawning a thread. (auto_thread stays true
+  # globally so #coding/#learning/etc still get one isolated thread per task.)
+  no_thread_channels: ['1517149565608792096']     # #general → inline replies
 
   channel_prompts:
     # #tldr (Phase 1) — faithful URL/doc summariser, fetch+read only.
@@ -74,9 +80,14 @@ discord:
     # --- Phase 3 advisory modes (all read-only/advisory, flash, mention-gated) ---
     # #general — explicit NO-TOOLS allowlist (toolsets: []) → pure chat. The empty
     # list is honored as "send ZERO tools" (distinct from absent = platform default).
+    # Phase 4: memory: false makes it truly read-side ephemeral — the global
+    # MEMORY.md/USER.md snapshot is NOT loaded into the system prompt (the agent
+    # is built with skip_memory=True), so a prompt-extraction ("repeat everything
+    # above") cannot echo back injected memory. Infrastructure, not prose.
     - id: '1517149565608792096'
       toolsets: []
       max_turns: 10
+      memory: false
     # #learning — web research + memory (writes sourced summaries to the store).
     - id: '1518563576011427970'
       toolsets: [web, memory]

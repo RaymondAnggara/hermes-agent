@@ -22,13 +22,26 @@ import re
 # catch credentials that appear in conversation *content* (e.g. a user pastes
 # someone's GitHub token), including ones we never configured.
 GATEWAY_SECRET_PATTERNS = (
-    re.compile(r"\bsk-[A-Za-z0-9][A-Za-z0-9_\-]{12,}\b"),       # OpenAI-style
+    re.compile(r"\bsk-[A-Za-z0-9][A-Za-z0-9_\-]{12,}\b"),       # OpenAI-style (also covers
+                                                                # the opencode-go key: it is
+                                                                # an ``sk-`` 67-char token)
     re.compile(r"\bgh[pousr]_[A-Za-z0-9_]{20,}\b"),             # GitHub PAT/OAuth
     re.compile(r"\bxox[baprs]-[A-Za-z0-9\-]{20,}\b"),           # Slack
     re.compile(r"\bhf_[A-Za-z0-9]{20,}\b"),                     # HuggingFace
     re.compile(r"\bglpat-[A-Za-z0-9_\-]{20,}\b"),               # GitLab PAT
     re.compile(r"\btvly-[A-Za-z0-9_\-]{16,}\b"),               # Tavily
     re.compile(r"(?i)\b(Bearer\s+)[A-Za-z0-9._\-]{20,}\b"),     # Bearer tokens
+    # --- Exchange / cloud credential shapes (Phase 4; Phase 5 #investment prep) ---
+    # Distinctive prefixes / structures only, so ordinary prose is never mangled.
+    # NOTE: prefix-less exchange keys (e.g. Binance's 64-char alphanumeric API
+    # key/secret) are deliberately NOT shape-matched here -- a bare 64-char
+    # alnum pattern false-positives on hashes/IDs. Those are covered instead by
+    # the provider-agnostic VALUE layer below once configured as secret-named
+    # env vars (BINANCE_API_SECRET, COINBASE_API_SECRET, ...).
+    re.compile(r"-----BEGIN(?:[A-Z ]+)? PRIVATE KEY-----[\s\S]+?-----END(?:[A-Z ]+)? PRIVATE KEY-----"),  # PEM private key block (Coinbase CDP / SSH / EC / RSA)
+    re.compile(r"\b(?:AKIA|ASIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA)[0-9A-Z]{16}\b"),  # AWS access key id
+    re.compile(r"\borganizations/[0-9a-fA-F-]{8,}/apiKeys/[0-9a-fA-F-]{8,}\b"),  # Coinbase CDP key resource name
+    re.compile(r"\b[rs]k_(?:live|test)_[A-Za-z0-9]{16,}\b"),     # Stripe secret/restricted keys
 )
 
 # --- Value-based redaction (provider-agnostic) -----------------------------

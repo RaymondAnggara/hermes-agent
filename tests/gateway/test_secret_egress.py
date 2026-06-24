@@ -34,11 +34,41 @@ LEAKED = _tok("ghp", "_" + _BODY)
     _tok("hf", "_0123456789abcdefghijklmnopqrst"),   # HuggingFace
     _tok("glpat", "-ABCDEFGHIJ0123456789"),          # GitLab
     _tok("tvly", "-0123456789abcdefghijklmnop"),     # Tavily (new)
+    # Phase 4 exchange/cloud credential shapes:
+    _tok("sk-", "UbL" + "a" * 40 + "-" + "b" * 20),  # opencode-go key shape (sk-, ~67 chars)
+    _tok("AKIA", "IOSFODNN7EXAMPLE"),                # AWS access key id
+    _tok("ASIA", "IOSFODNN7EXAMPLE"),                # AWS temporary access key id
+    _tok("sk_live_", "abcdef0123456789ABCDEF"),      # Stripe secret key
+    _tok("rk_test_", "abcdef0123456789ABCDEF"),      # Stripe restricted key
+    _tok("organizations/", "abc12345/apiKeys/def67890abcdef"),  # Coinbase CDP key path
 ])
 def test_known_token_shapes_are_redacted(secret):
     out = redact_secrets(f"the key is {secret} ok")
     assert secret not in out
     assert "[REDACTED]" in out
+
+
+def test_pem_private_key_block_is_fully_redacted():
+    """A pasted PEM private key (Coinbase CDP / SSH / EC) is scrubbed whole,
+    not just its header line -- the body is the secret."""
+    pem = (
+        "-----BEGIN EC PRIVATE KEY-----\n"
+        "MHcCAQEEIabc123def456ghi789jkl012mno345pqr678stu901\n"
+        "-----END EC PRIVATE KEY-----"
+    )
+    out = redact_secrets(f"here is the key:\n{pem}\nthanks")
+    assert "MHcCAQEEI" not in out
+    assert "[REDACTED]" in out
+
+
+def test_exchange_shape_patterns_do_not_mangle_prose():
+    """The new exchange/cloud patterns must not fire on ordinary text."""
+    for text in (
+        "The organization apiKeys are reviewed by the platform team.",
+        "AKIA is a common AWS prefix but AKIA alone is not a key.",
+        "commit e1f49fd touched the gateway module.",
+    ):
+        assert redact_secrets(text) == text
 
 
 def test_bearer_header_redacted_keeps_prefix():

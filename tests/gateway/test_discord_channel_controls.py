@@ -264,6 +264,36 @@ async def test_no_thread_channels_csv_parsing(adapter, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_failed_auto_thread_falls_back_to_inline_not_dropped(adapter, monkeypatch, caplog):
+    """When thread creation fails (returns None), the message must still be
+    handled inline in the origin channel -- NOT silently dropped (Phase 4 fix
+    for the auto_thread silent-non-response finding) -- and the fallback is
+    logged rather than swallowed."""
+    import logging
+
+    monkeypatch.setenv("DISCORD_REQUIRE_MENTION", "false")
+    monkeypatch.delenv("DISCORD_NO_THREAD_CHANNELS", raising=False)
+    monkeypatch.delenv("DISCORD_AUTO_THREAD", raising=False)
+    monkeypatch.delenv("DISCORD_IGNORED_CHANNELS", raising=False)
+    monkeypatch.delenv("DISCORD_FREE_RESPONSE_CHANNELS", raising=False)
+
+    # Thread creation fails for this channel.
+    adapter._auto_create_thread = AsyncMock(return_value=None)
+
+    message = make_message(channel=FakeTextChannel(channel_id=900), content="hello")
+    with caplog.at_level(logging.WARNING):
+        await adapter._handle_message(message)
+
+    adapter._auto_create_thread.assert_awaited_once()
+    # Still replied (inline) rather than dropped.
+    adapter.handle_message.assert_awaited_once()
+    event = adapter.handle_message.await_args.args[0]
+    assert event.source.chat_type == "group"  # inline in the origin channel, not a thread
+    # The failure is visible, not silent.
+    assert any("Auto-thread failed" in rec.message for rec in caplog.records)
+
+
+@pytest.mark.asyncio
 async def test_no_thread_with_auto_thread_disabled_is_noop(adapter, monkeypatch):
     """no_thread_channels is a no-op when auto_thread is globally disabled."""
     monkeypatch.setenv("DISCORD_REQUIRE_MENTION", "false")

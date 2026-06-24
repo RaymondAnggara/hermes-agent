@@ -6,7 +6,11 @@ low-privilege channel like ``#tldr`` cannot reach terminal/write/execute tools
 even if instructed to. They are not change-detector snapshots.
 """
 
-from gateway.platforms.base import resolve_channel_toolsets, resolve_channel_max_turns
+from gateway.platforms.base import (
+    resolve_channel_toolsets,
+    resolve_channel_max_turns,
+    resolve_channel_memory_disabled,
+)
 from toolsets import resolve_toolset, TOOLSETS
 
 TLDR_ID = "1518563840814747793"
@@ -118,3 +122,39 @@ def test_max_turns_rejects_bool_and_nonpositive():
     assert resolve_channel_max_turns(_cfg([{"id": TLDR_ID, "max_turns": True}]), TLDR_ID) is None
     assert resolve_channel_max_turns(_cfg([{"id": TLDR_ID, "max_turns": 0}]), TLDR_ID) is None
     assert resolve_channel_max_turns(_cfg([{"id": TLDR_ID, "max_turns": -1}]), TLDR_ID) is None
+
+
+# --- per-channel memory kill (Phase 4: #general read-side ephemerality) ----
+
+GENERAL_ID = "1517149565608792096"
+
+
+def test_memory_disabled_only_on_explicit_false():
+    """``memory: false`` disables memory; the field absent or truthy keeps it."""
+    assert resolve_channel_memory_disabled(
+        _cfg([{"id": GENERAL_ID, "toolsets": [], "memory": False}]), GENERAL_ID
+    ) is True
+    # Field absent -> memory follows global config (not disabled).
+    assert resolve_channel_memory_disabled(
+        _cfg([{"id": GENERAL_ID, "toolsets": []}]), GENERAL_ID
+    ) is False
+    # Truthy values do NOT disable -- only an explicit boolean False does.
+    for truthy in (True, "false", "no", 1, 0, "off"):
+        assert resolve_channel_memory_disabled(
+            _cfg([{"id": GENERAL_ID, "memory": truthy}]), GENERAL_ID
+        ) is False
+
+
+def test_memory_disabled_no_binding_keeps_default():
+    """No matching binding (or no bindings) leaves memory enabled (False)."""
+    assert resolve_channel_memory_disabled(
+        _cfg([{"id": "other", "memory": False}]), GENERAL_ID
+    ) is False
+    assert resolve_channel_memory_disabled({}, GENERAL_ID) is False
+    assert resolve_channel_memory_disabled({"channel_toolsets": []}, GENERAL_ID) is False
+
+
+def test_memory_disabled_parent_fallback_for_threads():
+    """A thread inherits its parent channel's memory-disabled flag."""
+    bindings = [{"id": GENERAL_ID, "toolsets": [], "memory": False}]
+    assert resolve_channel_memory_disabled(_cfg(bindings), "999thread", GENERAL_ID) is True

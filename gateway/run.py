@@ -11283,6 +11283,14 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             )
             if _channel_toolsets is not None:
                 enabled_toolsets = sorted(_channel_toolsets)
+            # Per-channel memory kill (Phase 4): match the main message path so a
+            # ``memory: false`` channel stays read-side ephemeral here too.
+            from gateway.platforms.base import resolve_channel_memory_disabled
+            _channel_skip_memory = resolve_channel_memory_disabled(
+                user_config.get(platform_key) or {},
+                source.chat_id,
+                source.parent_chat_id,
+            )
             agent_cfg = user_config.get("agent") or {}
             disabled_toolsets = agent_cfg.get("disabled_toolsets") or None
 
@@ -11341,6 +11349,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                     verbose_logging=False,
                     enabled_toolsets=enabled_toolsets,
                     disabled_toolsets=disabled_toolsets,
+                    skip_memory=_channel_skip_memory,
                     reasoning_config=reasoning_config,
                     service_tier=self._service_tier,
                     request_overrides=turn_route.get("request_overrides"),
@@ -14593,6 +14602,17 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             _build_elev = None  # arm went stale — lapse to the read-only default
         if _build_elev and _build_elev.get("toolsets"):
             enabled_toolsets = sorted(_build_elev["toolsets"])
+        # Per-channel memory kill (Phase 4): a binding with ``memory: false``
+        # (e.g. #general) builds the agent with skip_memory=True so the global
+        # MEMORY.md/USER.md snapshot is never loaded into the system prompt --
+        # true read-side ephemerality, enforced as infrastructure (the data is
+        # absent), so prompt-extraction cannot echo it back.
+        from gateway.platforms.base import resolve_channel_memory_disabled
+        _channel_skip_memory = resolve_channel_memory_disabled(
+            user_config.get(platform_key) or {},
+            source.chat_id,
+            source.parent_chat_id,
+        )
         agent_cfg_local = user_config.get("agent") or {}
         disabled_toolsets = agent_cfg_local.get("disabled_toolsets") or None
 
@@ -15646,6 +15666,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                     verbose_logging=False,
                     enabled_toolsets=enabled_toolsets,
                     disabled_toolsets=disabled_toolsets,
+                    skip_memory=_channel_skip_memory,
                     ephemeral_system_prompt=combined_ephemeral or None,
                     prefill_messages=self._prefill_messages or None,
                     reasoning_config=reasoning_config,
