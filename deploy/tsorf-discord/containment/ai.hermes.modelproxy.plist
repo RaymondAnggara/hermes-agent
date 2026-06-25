@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Phase 4 W3 / containment-(c1): durable model-key egress proxy service.
+
+  launchd runs the SUPERVISOR, which reads the model key from the macOS Keychain
+  and launches the proxy with the key in the proxy's env only. KeepAlive keeps
+  it up; RunAtLoad starts it at login. The agent (gateway) is a SEPARATE service
+  with no model key in its env, pointed at 127.0.0.1:8787.
+
+  Install:
+    cp ai.hermes.modelproxy.plist ~/Library/LaunchAgents/
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.hermes.modelproxy.plist
+  First load may surface a Keychain prompt -- click "Always Allow" so the
+  service can read the key non-interactively on subsequent restarts.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>ai.hermes.modelproxy</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/raymond/.hermes/hermes-agent/venv/bin/python</string>
+        <string>/Users/raymond/.hermes/hermes-agent/deploy/tsorf-discord/containment/supervisor.py</string>
+        <string>--backend</string>
+        <string>keychain</string>
+        <string>--port</string>
+        <string>8787</string>
+        <string>--upstream</string>
+        <string>https://opencode.ai/zen/go/v1</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/raymond/.hermes/hermes-agent</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/raymond/.hermes/hermes-agent/venv/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>VIRTUAL_ENV</key>
+        <string>/Users/raymond/.hermes/hermes-agent/venv</string>
+        <key>HERMES_HOME</key>
+        <string>/Users/raymond/.hermes</string>
+    </dict>
+
+    <key>LimitLoadToSessionType</key>
+    <array>
+        <string>Aqua</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/raymond/.hermes/logs/modelproxy.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/raymond/.hermes/logs/modelproxy.error.log</string>
+</dict>
+</plist>

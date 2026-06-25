@@ -1,9 +1,20 @@
 # Phase 4 W3 — containment-(c): model-key egress proxy + secrets-out (PROTOTYPE)
 
-Status: **prototype built + tested, NOT cut over live.** This directory is
-deploy tooling (footprint ladder: edge, not core). Nothing here imports or
-mutates the running Hermes agent. The cutover (steps below) is a **gated** step
-the operator approves at STOP GATE 4.
+Status: **LIVE as of 2026-06-25.** c1 (proxy) + c3 (Keychain) are cut over: the
+agent runs with a placeholder model key and `base_url: http://127.0.0.1:8787`;
+the real `OPENCODE_GO_API_KEY` is out of `~/.hermes/.env` (placeholder only) and
+lives in the macOS Keychain, read at launch by the launchd-managed supervisor
+(`ai.hermes.modelproxy`). Verified end-to-end: `hermes -z` round-trip returned
+`pong` through the proxy; restart-survival + non-interactive Keychain read
+confirmed. Rollback in the runbook below (backups: `.env.bak.*`,
+`config.yaml.bak.*`). STILL OPEN: c2 (Bitwarden as the secrets backend) and the
+network-egress allowlist. This directory is deploy tooling (footprint ladder:
+edge, not core); nothing here imports the running agent.
+
+A live-cutover finding (test the map, don't trust it): the opencode.ai zen/go
+relay GZIPs responses regardless of Accept-Encoding. The proxy now relays
+Content-Encoding + raw bytes transparently (it must NOT strip Content-Encoding
+while passing compressed bytes). Regression-tested in test_phase4_w3_proxy.py.
 
 ## Why
 

@@ -55,12 +55,16 @@ _AUTH_HEADER = "Authorization"
 _DROP_INBOUND = {"authorization", "x-api-key", "api-key", "openai-api-key"}
 
 # Hop-by-hop headers (RFC 7230 6.1) that must not be forwarded, plus Host /
-# Content-Length which we recompute, and Accept-Encoding which we drop so the
-# upstream doesn't gzip a stream we're relaying verbatim.
+# Content-Length which we recompute. We deliberately do NOT touch
+# Accept-Encoding/Content-Encoding: the proxy relays compression transparently
+# end-to-end (raw bytes both ways, auto_decompress=False), so the agent's own
+# HTTP client negotiates and decodes exactly as it would talking direct. The
+# upstream (opencode.ai zen/go relay) compresses regardless, so stripping the
+# response Content-Encoding while passing compressed bytes corrupts the body.
 _HOP_BY_HOP = {
     "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
     "te", "trailer", "trailers", "transfer-encoding", "upgrade",
-    "host", "content-length", "accept-encoding",
+    "host", "content-length",
 }
 
 # The placeholder the AGENT is configured with (so its config/.env contains no
@@ -158,7 +162,9 @@ def build_app(upstream_base: str, upstream_key: str):
             # Stream the response straight back (SSE-safe).
             resp = web.StreamResponse(status=upstream_resp.status)
             for k, v in upstream_resp.headers.items():
-                if k.lower() in _HOP_BY_HOP or k.lower() == "content-encoding":
+                # Relay everything except hop-by-hop. Content-Encoding is passed
+                # through (raw bytes relayed verbatim) so the client decodes it.
+                if k.lower() in _HOP_BY_HOP:
                     continue
                 resp.headers[k] = v
             await resp.prepare(request)

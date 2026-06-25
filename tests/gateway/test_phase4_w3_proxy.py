@@ -65,7 +65,7 @@ def test_inbound_agent_credentials_are_dropped_and_real_key_injected():
         "Content-Type": "application/json",
         "Connection": "keep-alive",      # hop-by-hop, must drop
         "Host": "127.0.0.1:8787",        # must be rewritten
-        "Accept-Encoding": "gzip",        # must drop (we relay verbatim)
+        "Accept-Encoding": "gzip, br",    # passed through (transparent compression)
     }
     out = proxy.rewrite_request_headers(incoming, REAL_KEY, "opencode.ai")
 
@@ -74,7 +74,9 @@ def test_inbound_agent_credentials_are_dropped_and_real_key_injected():
     assert "X-Api-Key" not in out and "x-api-key" not in {k.lower() for k in out}
     assert "agent-tried-to-sneak-this" not in json.dumps(out)
     assert "Connection" not in out
-    assert "Accept-Encoding" not in out
+    # Accept-Encoding is relayed (raw-bytes passthrough) so the client decodes
+    # the upstream's compressed response exactly as it would talking direct.
+    assert out["Accept-Encoding"] == "gzip, br"
     assert out["Host"] == "opencode.ai"
     assert out["Content-Type"] == "application/json"  # benign headers pass
 
@@ -227,3 +229,45 @@ async def test_proxy_injects_key_and_streams_response_end_to_end():
     # The streamed SSE body was relayed intact.
     assert "data: hello" in body and "data: world" in body
     assert "data: [DONE]" in body
+
+
+@pytest.mark.asyncio
+async def test_proxy_relays_compressed_upstream_transparently():
+    """Regression for the live-cutover finding: the opencode.ai zen/go relay
+    gzips responses regardless of Accept-Encoding. The proxy must relay the
+    Content-Encoding header + raw compressed bytes verbatim so the client
+    decodes them -- it must NOT strip Content-Encoding while passing compressed
+    bytes (which corrupts the body). Proven with a real gzip stub upstream."""
+    import gzip
+    from aiohttp import web
+    from aiohttp.test_utils import TestServer, TestClient
+
+    original = '{"choices":[{"message":{"content":"pong"}}]}'
+
+    async def gzip_upstream(request):
+        body = gzip.compress(original.encode())
+        return web.Response(body=body, headers={
+            "Content-Encoding": "gzip", "Content-Type": "application/json",
+        })
+
+    up = web.Application()
+    up.router.add_route("*", "/{tail:.*}", gzip_upstream)
+    up_server = TestServer(up)
+    await up_server.start_server()
+
+    app = proxy.build_app(f"http://127.0.0.1:{up_server.port}", REAL_KEY)
+    client = TestClient(TestServer(app))
+    await client.start_server()
+    try:
+        # aiohttp's client auto-decompresses based on Content-Encoding, exactly
+        # like the agent's real HTTP client -- so a correct passthrough yields
+        # the original JSON.
+        resp = await client.post("/chat/completions",
+                                 headers={"Authorization": "Bearer placeholder"})
+        text = await resp.text()
+    finally:
+        await client.close()
+        await up_server.close()
+
+    assert resp.status == 200
+    assert text == original
