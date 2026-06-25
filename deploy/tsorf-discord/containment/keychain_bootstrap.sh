@@ -20,8 +20,11 @@
 # Item identity (account/service) is fixed so all three tools agree.
 set -euo pipefail
 
-SERVICE="hermes-tsorf-model-key"
-ACCOUNT="opencode-go"
+# Item identity defaults to the model key, but can be overridden via env so the
+# same helper can manage the bws bootstrap token too, e.g.:
+#   KC_SERVICE=hermes-bws-access-token KC_ACCOUNT=bws ./keychain_bootstrap.sh read
+SERVICE="${KC_SERVICE:-hermes-tsorf-model-key}"
+ACCOUNT="${KC_ACCOUNT:-opencode-go}"
 
 cmd="${1:-}"
 case "$cmd" in

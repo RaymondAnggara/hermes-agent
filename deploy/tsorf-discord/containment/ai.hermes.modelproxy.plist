@@ -24,7 +24,9 @@
         <string>/Users/raymond/.hermes/hermes-agent/venv/bin/python</string>
         <string>/Users/raymond/.hermes/hermes-agent/deploy/tsorf-discord/containment/supervisor.py</string>
         <string>--backend</string>
-        <string>keychain</string>
+        <string>bitwarden</string>
+        <string>--bitwarden-secret-id</string>
+        <string>5167b447-bd31-42cf-a29e-b47100e1dc5c</string>
         <string>--port</string>
         <string>8787</string>
         <string>--upstream</string>

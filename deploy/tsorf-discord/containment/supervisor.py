@@ -34,17 +34,53 @@ from pathlib import Path
 _HERE = Path(__file__).resolve().parent
 _KEYCHAIN_SH = _HERE / "keychain_bootstrap.sh"
 
+# Keychain item holding the bws bootstrap token (c2 layered with c3): the
+# supervisor reads it to authenticate to Bitwarden, so the token is never
+# plaintext on disk or in the agent's env.
+_BWS_TOKEN_KC_SERVICE = "hermes-bws-access-token"
+_BWS_TOKEN_KC_ACCOUNT = "bws"
+
+
+def _keychain_read(*, service: str | None = None, account: str | None = None,
+                   _runner=subprocess.run) -> str:
+    """Read a single Keychain item via keychain_bootstrap.sh (item overridable
+    through KC_SERVICE/KC_ACCOUNT env so one helper serves both the model key
+    and the bws token)."""
+    env = dict(os.environ)
+    if service:
+        env["KC_SERVICE"] = service
+    if account:
+        env["KC_ACCOUNT"] = account
+    res = _runner(
+        ["bash", str(_KEYCHAIN_SH), "read"],
+        capture_output=True, text=True, check=True, env=env,
+    )
+    return (res.stdout or "").strip()
+
 
 def resolve_key_keychain(*, _runner=subprocess.run) -> str:
     """Read the model key from the macOS Keychain via keychain_bootstrap.sh."""
-    res = _runner(
-        ["bash", str(_KEYCHAIN_SH), "read"],
-        capture_output=True, text=True, check=True,
-    )
-    key = (res.stdout or "").strip()
+    key = _keychain_read(_runner=_runner)  # default item = the model key
     if not key:
         raise RuntimeError("keychain returned an empty model key")
     return key
+
+
+def bootstrap_bws_token_from_keychain(*, _runner=subprocess.run) -> bool:
+    """If BWS_ACCESS_TOKEN isn't already in the env, load it from the Keychain
+    item so the bitwarden backend can authenticate without a plaintext token on
+    disk. Returns True if a token is available afterwards."""
+    if os.environ.get("BWS_ACCESS_TOKEN"):
+        return True
+    try:
+        tok = _keychain_read(service=_BWS_TOKEN_KC_SERVICE,
+                             account=_BWS_TOKEN_KC_ACCOUNT, _runner=_runner)
+    except Exception:
+        return False
+    if tok:
+        os.environ["BWS_ACCESS_TOKEN"] = tok
+        return True
+    return False
 
 
 def resolve_key_bitwarden(secret_id: str, *, _runner=subprocess.run) -> str:
@@ -73,6 +109,9 @@ def resolve_key(backend: str, *, bitwarden_secret_id: str | None = None,
     if backend == "bitwarden":
         if not bitwarden_secret_id:
             raise RuntimeError("bitwarden backend needs --bitwarden-secret-id")
+        # Load the bws bootstrap token from the Keychain (c3) so it is never
+        # plaintext on disk; then fetch the model key from Bitwarden (c2).
+        bootstrap_bws_token_from_keychain(_runner=_runner)
         return resolve_key_bitwarden(bitwarden_secret_id, _runner=_runner)
     raise RuntimeError(f"unknown backend: {backend!r}")
 

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -148,6 +149,68 @@ def test_resolve_key_bitwarden_requires_bootstrap_token(monkeypatch):
 def test_resolve_key_dispatch_rejects_unknown_backend():
     with pytest.raises(RuntimeError, match="unknown backend"):
         supervisor.resolve_key("smoke-signals")
+
+
+# ---------------------------------------------------------------------------
+# c2: bws bootstrap token is loaded from the Keychain, never plaintext on disk
+# ---------------------------------------------------------------------------
+
+def test_keychain_read_overrides_item_via_env():
+    """_keychain_read passes KC_SERVICE/KC_ACCOUNT through so one helper can read
+    both the model key and the bws token item."""
+    runner = MagicMock(return_value=MagicMock(stdout="the-bws-token\n"))
+    out = supervisor._keychain_read(
+        service="hermes-bws-access-token", account="bws", _runner=runner)
+    assert out == "the-bws-token"
+    passed_env = runner.call_args.kwargs["env"]
+    assert passed_env["KC_SERVICE"] == "hermes-bws-access-token"
+    assert passed_env["KC_ACCOUNT"] == "bws"
+
+
+def test_bootstrap_bws_token_keeps_existing_env_token(monkeypatch):
+    """If a token is already in the env, the Keychain is not consulted."""
+    monkeypatch.setenv("BWS_ACCESS_TOKEN", "already-here")
+    runner = MagicMock(side_effect=AssertionError("should not read keychain"))
+    assert supervisor.bootstrap_bws_token_from_keychain(_runner=runner) is True
+    assert os.environ["BWS_ACCESS_TOKEN"] == "already-here"
+
+
+def test_bootstrap_bws_token_loads_from_keychain(monkeypatch):
+    """With no env token, the token is pulled from the Keychain item into the
+    env so the bitwarden fetch can authenticate."""
+    monkeypatch.delenv("BWS_ACCESS_TOKEN", raising=False)
+    runner = MagicMock(return_value=MagicMock(stdout="0.kc-token\n"))
+    assert supervisor.bootstrap_bws_token_from_keychain(_runner=runner) is True
+    assert os.environ["BWS_ACCESS_TOKEN"] == "0.kc-token"
+    # It read the bws-token item, not the model-key item.
+    passed_env = runner.call_args.kwargs["env"]
+    assert passed_env["KC_SERVICE"] == "hermes-bws-access-token"
+
+
+def test_bootstrap_bws_token_returns_false_when_absent(monkeypatch):
+    monkeypatch.delenv("BWS_ACCESS_TOKEN", raising=False)
+    runner = MagicMock(return_value=MagicMock(stdout="\n"))  # empty item
+    assert supervisor.bootstrap_bws_token_from_keychain(_runner=runner) is False
+    assert "BWS_ACCESS_TOKEN" not in os.environ
+
+
+def test_resolve_key_bitwarden_bootstraps_token_from_keychain(monkeypatch):
+    """End-to-end of the c2 path with no env token: resolve_key('bitwarden')
+    loads the token from the Keychain (c3) then fetches the key from Bitwarden
+    (c2) -- the token is never required to be in the env or on disk."""
+    monkeypatch.delenv("BWS_ACCESS_TOKEN", raising=False)
+
+    def _fake_run(argv, **kwargs):
+        if argv[0] == "bash":  # keychain read of the bws token
+            return MagicMock(stdout="0.kc-token\n")
+        if argv[0] == "bws":   # secret fetch (token now in env)
+            assert os.environ.get("BWS_ACCESS_TOKEN") == "0.kc-token"
+            return MagicMock(stdout=json.dumps({"value": REAL_KEY}))
+        raise AssertionError(f"unexpected argv {argv}")
+
+    key = supervisor.resolve_key(
+        "bitwarden", bitwarden_secret_id="sid", _runner=_fake_run)
+    assert key == REAL_KEY
 
 
 def test_proxy_child_env_holds_key_but_scrubs_agent_var():

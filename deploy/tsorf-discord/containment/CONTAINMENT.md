@@ -1,15 +1,21 @@
 # Phase 4 W3 — containment-(c): model-key egress proxy + secrets-out (PROTOTYPE)
 
-Status: **LIVE as of 2026-06-25.** c1 (proxy) + c3 (Keychain) are cut over: the
-agent runs with a placeholder model key and `base_url: http://127.0.0.1:8787`;
-the real `OPENCODE_GO_API_KEY` is out of `~/.hermes/.env` (placeholder only) and
-lives in the macOS Keychain, read at launch by the launchd-managed supervisor
-(`ai.hermes.modelproxy`). Verified end-to-end: `hermes -z` round-trip returned
-`pong` through the proxy; restart-survival + non-interactive Keychain read
-confirmed. Rollback in the runbook below (backups: `.env.bak.*`,
-`config.yaml.bak.*`). STILL OPEN: c2 (Bitwarden as the secrets backend) and the
-network-egress allowlist. This directory is deploy tooling (footprint ladder:
-edge, not core); nothing here imports the running agent.
+Status: **LIVE as of 2026-06-25 — c1 + c2 + c3 all cut over.** The agent runs
+with a placeholder model key and `base_url: http://127.0.0.1:8787`; the real
+`OPENCODE_GO_API_KEY` is out of `~/.hermes/.env`. The launchd-managed supervisor
+(`ai.hermes.modelproxy`) now resolves the key from **Bitwarden Secrets Manager**
+(c2, project "Hermes Agent", secret id `5167b447-…`), authenticating with a
+machine-account **`BWS_ACCESS_TOKEN` pinned in the macOS Keychain** (c3 bootstrap
+item `hermes-bws-access-token`/`bws`) — so neither the model key nor the
+bootstrap token is ever plaintext on disk or in the agent's env. Verified
+end-to-end: supervisor logged "resolved model key from bitwarden", proxy healthy,
+`hermes -z` returned `pong`; the Bitwarden value was hash-matched against the
+live key before cutover. A **Keychain copy of the model key**
+(`hermes-tsorf-model-key`/`opencode-go`) is retained as a documented break-glass
+fallback (switch the plist `--backend` to `keychain`). Rollback in the runbook
+below (backups: `.env.bak.*`, `config.yaml.bak.*`). STILL OPEN: the network-egress
+allowlist. This directory is deploy tooling (footprint ladder: edge, not core);
+nothing here imports the running agent.
 
 A live-cutover finding (test the map, don't trust it): the opencode.ai zen/go
 relay GZIPs responses regardless of Accept-Encoding. The proxy now relays
