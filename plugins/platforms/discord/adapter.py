@@ -4145,6 +4145,37 @@ class DiscordAdapter(BasePlatformAdapter):
             return bool(configured)
         return os.getenv("DISCORD_REQUIRE_MENTION", "true").lower() not in {"false", "0", "no", "off"}
 
+    def _self_role_mention_ids(self, message) -> set:
+        """Return the IDs of the bot's OWN integration (managed) roles that this
+        message @mentions.
+
+        On most servers Discord auto-creates a managed role for a bot that
+        shares the bot's display name, so the ``@`` picker offers both
+        ``@Name`` (the bot *user*) and ``@Name`` (the *role*). An ``@role``
+        ping lands in ``message.role_mentions`` (NOT ``message.mentions``), so
+        the user-only mention gate silently drops it — the bot appears to
+        ignore mentions "sometimes" depending on which entry the sender picked.
+        Treating the bot's managed-role mention as a self-mention closes that
+        gap. We restrict to the bot's *own* managed role (``tags.bot_id`` ==
+        this bot) so mentioning an unrelated/shared role is not misread.
+        """
+        role_mentions = getattr(message, "role_mentions", None) or []
+        if not role_mentions or self._client.user is None:
+            return set()
+        guild = getattr(message, "guild", None)
+        me = getattr(guild, "me", None) if guild is not None else None
+        if me is None:
+            return set()
+        bot_id = self._client.user.id
+        own_managed_role_ids = set()
+        for r in getattr(me, "roles", []) or []:
+            tags = getattr(r, "tags", None)
+            if getattr(r, "managed", False) and tags is not None \
+                    and getattr(tags, "bot_id", None) == bot_id:
+                own_managed_role_ids.add(r.id)
+        return {r.id for r in role_mentions
+                if getattr(r, "id", None) in own_managed_role_ids}
+
     def _discord_allow_any_attachment(self) -> bool:
         """Return whether Discord attachments bypass the SUPPORTED_DOCUMENT_TYPES allowlist.
 
@@ -5206,10 +5237,15 @@ class DiscordAdapter(BasePlatformAdapter):
             if snapshot_text_parts and not raw_content:
                 raw_content = "\n".join(snapshot_text_parts)
                 normalized_content = raw_content
-        if self._client.user and self._client.user in message.mentions:
+        self_role_ids = self._self_role_mention_ids(message)
+        if self._client.user and (self._client.user in message.mentions or self_role_ids):
             mention_prefix = True
             normalized_content = normalized_content.replace(f"<@{self._client.user.id}>", "").strip()
             normalized_content = normalized_content.replace(f"<@!{self._client.user.id}>", "").strip()
+            # Also strip the bot's own role-mention token(s) so the agent sees
+            # clean text whether the sender picked @Bot the user or @Bot the role.
+            for _rid in self_role_ids:
+                normalized_content = normalized_content.replace(f"<@&{_rid}>", "").strip()
             message.content = normalized_content
         if not isinstance(message.channel, discord.DMChannel):
             channel_ids = {str(message.channel.id)}
