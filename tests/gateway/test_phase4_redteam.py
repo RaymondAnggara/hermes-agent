@@ -23,12 +23,19 @@ inert:
      the system-prompt snapshot at load time (so even memory-using channels
      like #learning can't be turned into a persistent injection vector).
 
-HONEST GAP (not tested here -- it does not exist yet): a default-deny NETWORK
-egress allowlist (the agent can still make arbitrary outbound connections at the
-OS layer). That is a container/network-layer control and a Phase 4 containment-(c)
-deliverable, NOT something this content-level red-team can assert. See the
-explicitly-skipped test at the bottom.
+NETWORK egress default-deny (the agent opening arbitrary outbound sockets at the
+OS layer) is a container/network-layer control, not a content-level one — it is
+built under deploy/tsorf-discord/containment/network/ (an `internal: true` docker
+network + an allowlisting egress proxy). The two tests at the bottom assert its
+config is genuinely default-deny + closed-allowlist (unit), and, when docker is
+present, that direct egress has no route while only the allowlist gets through
+(integration).
 """
+
+import re
+import shutil
+import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -211,15 +218,78 @@ def test_poisoned_memory_entry_is_blocked_from_system_prompt(monkeypatch, tmp_pa
 
 
 # ---------------------------------------------------------------------------
-# HONEST GAP: network-egress allowlist is NOT yet enforced (Phase 4 (c))
+# Network-egress default-deny (Phase 4 containment-(c), option 2) — BUILT.
+# deploy/tsorf-discord/containment/network/ : an `internal: true` docker network
+# (no route out) + a tinyproxy egress proxy with FilterDefaultDeny On. These
+# assert the SHIPPED config is genuinely default-deny + a closed allowlist, so a
+# careless future edit (e.g. adding a `.*` catch-all, or opening the client ACL)
+# fails CI instead of silently re-opening egress.
 # ---------------------------------------------------------------------------
 
-@pytest.mark.skip(
-    reason="Network-egress allowlist (default-deny outbound) is a container/"
-    "network-layer control delivered by Phase 4 containment-(c), which is not "
-    "built yet. The agent can still open arbitrary outbound connections at the "
-    "OS layer; the content-level secret-egress filter above is defense-in-depth, "
-    "NOT a substitute. Tracked as a remaining Phase 4 deliverable."
+_NET_DIR = (
+    Path(__file__).resolve().parents[2]
+    / "deploy" / "tsorf-discord" / "containment" / "network"
 )
-def test_network_egress_is_default_deny():  # pragma: no cover
-    raise AssertionError("not implemented until containment-(c)")
+
+
+def _allowlist_regexes() -> list[str]:
+    lines = (_NET_DIR / "allowlist.filter").read_text(encoding="utf-8").splitlines()
+    return [ln.strip() for ln in lines if ln.strip() and not ln.lstrip().startswith("#")]
+
+
+def test_egress_proxy_config_is_default_deny():
+    conf = (_NET_DIR / "tinyproxy.conf").read_text(encoding="utf-8")
+    # The destination ACL must be deny-by-default and driven by the allowlist file.
+    assert "FilterDefaultDeny On" in conf
+    assert 'Filter "/etc/tinyproxy/allowlist.filter"' in conf
+    assert "FilterExtended On" in conf
+    # The client ACL must NOT be world-open (only the internal subnet may use the proxy).
+    assert "Allow 0.0.0.0/0" not in conf
+    assert any(ln.startswith("Allow ") for ln in conf.splitlines())
+    # CONNECT (HTTPS tunnel) is restricted to 443 — no wildcard CONNECT port.
+    assert "ConnectPort 443" in conf
+
+
+def test_egress_allowlist_is_a_closed_set():
+    """The allowlist regexes admit EXACTLY the intended hosts and nothing else."""
+    regexes = _allowlist_regexes()
+    assert regexes, "allowlist must not be empty"
+    # No catch-all that would defeat default-deny.
+    for rx in regexes:
+        assert rx not in (".", ".*", "^.*$", ".+"), f"over-broad allowlist entry: {rx!r}"
+
+    def allowed(host: str) -> bool:
+        return any(re.search(rx, host, re.IGNORECASE) for rx in regexes)
+
+    # Intended destinations — must be reachable.
+    for host in (
+        "host.docker.internal",          # model-key proxy
+        "discord.com", "gateway.discord.gg",
+        "cdn.discordapp.com", "media.discordapp.net",
+        "api.tavily.com",
+    ):
+        assert allowed(host), f"expected allowlisted: {host}"
+
+    # Everything else — must be denied, including look-alikes / suffix attacks.
+    for host in (
+        "example.com", "evil.attacker.net", "1.1.1.1",
+        "api.openai.com", "pastebin.com",
+        "discord.com.attacker.net",       # suffix-append attack
+        "notdiscord.com", "tavily.com.evil.io",
+    ):
+        assert not allowed(host), f"should be denied but matched: {host}"
+
+
+@pytest.mark.integration
+def test_network_egress_is_default_deny():
+    """Live proof (needs docker): direct egress has no route; only the allowlist
+    gets through. Runs the same harness used for manual validation."""
+    if shutil.which("docker") is None:
+        pytest.skip("docker not available")
+    script = _NET_DIR / "validate_egress.sh"
+    result = subprocess.run(
+        ["bash", str(script)], capture_output=True, text=True, timeout=600
+    )
+    assert result.returncode == 0, (
+        f"egress validation failed:\n{result.stdout}\n{result.stderr}"
+    )

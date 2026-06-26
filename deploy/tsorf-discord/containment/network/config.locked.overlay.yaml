@@ -1,0 +1,68 @@
+# Config overlay to APPLY AT THE GATED CUTOVER ONLY (Phase B) — NOT live yet.
+# These are the keys in ~/.hermes/config.yaml that change when the orchestrator
+# moves from launchd-native into the locked container. Back up config.yaml first
+# (timestamped), apply these, then run the cutover in CONTAINMENT.md. Each is
+# reversible; rollback restores the backup.
+
+model:
+  # Host loopback (127.0.0.1) is the CONTAINER's loopback once re-hosted. Reach the
+  # host-side model-key proxy by name; the connection still goes OUT via the egress
+  # proxy (host.docker.internal is allowlisted). Was: http://127.0.0.1:8787
+  base_url: http://host.docker.internal:8787
+
+terminal:
+  # Was: docker. In-container, `docker` would mean docker-in-docker (host socket =
+  # host root = breaks containment). `local` runs terminal commands INSIDE the
+  # agent's own locked container, so anything the agent runs is network-default-denied
+  # too. The path-based write-jail (tools/file_tools.py) is backend-independent and
+  # still applies.
+  backend: local
+
+web:
+  # ALL web via Tavily (api.tavily.com over httpx → proxy-honoring + allowlisted).
+  # THREE keys, not two — `backend` (the general default) MUST move off ddgs too:
+  # the published container image does NOT ship the optional `ddgs`/`primp`
+  # packages (they were hand-installed on the host during earlier phases), so with
+  # `backend: ddgs` the web tool init throws on `import ddgs` and the ENTIRE web
+  # toolset fails to register — web_search AND web_extract vanish (seen live: #tldr
+  # replied "my web tools are gone, only read_file/search_files"). Tavily needs only
+  # httpx (in the image) + TAVILY_API_KEY, supports BOTH /search and /extract, and
+  # honors HTTPS_PROXY — so all three point at it. (Alternative if DuckDuckGo search
+  # is ever wanted: bake ddgs+primp into the image AND confirm primp honors the
+  # proxy — it may not, which would fail closed.)
+  backend: tavily
+  search_backend: tavily
+  extract_backend: tavily
+  # web_extract runs a LOCAL DNS-based SSRF pre-check that fail-closes in the
+  # locked container (no external DNS → "blocked as if internal"). Since the agent
+  # has NO direct egress and Tavily fetches server-side, that local check is both
+  # impossible AND redundant. trust_backend_fetch makes web_extract use the
+  # DNS-free always-blocked floor instead (still blocks 169.254.169.254 /
+  # metadata.google.internal). Keeps the network lock TIGHT (no DNS egress).
+  # Backed by tools/web_tools.py:_web_extract_trust_backend + a test.
+  trust_backend_fetch: true
+
+# #coding build sandbox: with terminal.backend=local the scratch repo must be a
+# volume on the AGENT container (docker-compose.locked.yml) instead of the old
+# `terminal.docker_volumes` host mount. Re-point the #coding binding's
+# build_workspace + the write-jail root to that in-container path at cutover. Add to
+# the compose `agent.volumes`, e.g.:
+#   - /Users/raymond/projects/Tsorf-Agent-Improvement:/projects/Tsorf-Agent-Improvement
+# (keep the SAME container path /projects/... so the existing binding + jail are unchanged).
+
+auxiliary:
+  web_extract:
+    # web_extract's optional content-cleaning LLM defaulted to provider: auto,
+    # which wandered to openrouter (blocked by the allowlist) / Nous (no auth).
+    # Pin it to `main` (the agent's own opencode-go model) so it stays on-allowlist.
+    # KNOWN MINOR LIMITATION: the auxiliary HTTP client does not honor HTTPS_PROXY,
+    # so even `main` can't reach host.docker.internal:8787 from the internal net →
+    # the cleaning step fails fast and web_extract falls back to RAW content (which
+    # the requesting channel's main model then summarizes — #tldr etc. work fine).
+    # Follow-up (code, not config): make the auxiliary client proxy-aware, or skip
+    # it in contained mode. Non-blocking — web research is functional.
+    provider: main
+
+# Secrets note (unchanged this phase): DISCORD_BOT_TOKEN + TAVILY_API_KEY remain in
+# /opt/data/.env (mounted). This phase hardens NETWORK egress; moving those two into
+# the supervisor/Bitwarden pattern (like the model key) is a separate follow-up.

@@ -102,7 +102,11 @@ from tools.tool_backend_helpers import (  # noqa: F401
     nous_tool_gateway_unavailable_message,
     prefers_gateway,
 )
-from tools.url_safety import async_is_safe_url, normalize_url_for_request
+from tools.url_safety import (
+    async_is_safe_url,
+    is_always_blocked_url,
+    normalize_url_for_request,
+)
 import sys
 
 logger = logging.getLogger(__name__)
@@ -140,6 +144,30 @@ def _load_web_config() -> dict:
         return load_config().get("web", {})
     except (ImportError, Exception):
         return {}
+
+def _web_extract_trust_backend() -> bool:
+    """True when web_extract should rely on the DNS-free always-blocked floor
+    instead of the full local-DNS SSRF resolution.
+
+    For CONTAINED deployments (network egress default-deny) where the agent has
+    NO direct outbound route and the extract backend (e.g. Tavily) fetches the
+    URL server-side: the local IP-based SSRF check is then both impossible (the
+    locked container cannot resolve external DNS) AND redundant (the agent cannot
+    reach any host directly — the network lock + server-side backend enforce
+    that). Cloud-metadata sentinels (169.254.169.254, metadata.google.internal,
+    …) remain blocked by hostname/literal-IP via ``is_always_blocked_url``.
+
+    This flag has two effects, both stemming from "the agent has no direct
+    egress": (1) web_extract's SSRF pre-check uses the DNS-free always-blocked
+    floor (above); (2) web_extract skips the auxiliary summarizer LLM — its HTTP
+    client can't reach the model through the egress proxy, so it would always fail
+    and truncate long pages to ~5K — and returns full raw content instead.
+
+    Off by default; opt in with ``web.trust_backend_fetch: true`` only when the
+    agent genuinely has no direct egress (the Phase 4 locked-network re-host).
+    """
+    return bool(_load_web_config().get("trust_backend_fetch"))
+
 
 def _get_backend() -> str:
     """Determine which web backend to use (shared fallback).
@@ -961,10 +989,19 @@ async def web_extract_tool(
         logger.info("Extracting content from %d URL(s)", len(normalized_urls))
 
         # ── SSRF protection — filter out private/internal URLs before any backend ──
+        # In a contained deployment (web.trust_backend_fetch) the agent has no
+        # direct egress and the backend fetches server-side, so the full local-DNS
+        # SSRF check is impossible (no external DNS) and redundant. Fall back to the
+        # DNS-free always-blocked floor, which still blocks cloud-metadata sentinels.
+        trust_backend = _web_extract_trust_backend()
         safe_urls = []
         ssrf_blocked: List[Dict[str, Any]] = []
         for url in normalized_urls:
-            if not await async_is_safe_url(url):
+            if trust_backend:
+                blocked = await asyncio.to_thread(is_always_blocked_url, url)
+            else:
+                blocked = not await async_is_safe_url(url)
+            if blocked:
                 ssrf_blocked.append({
                     "url": url, "title": "", "content": "",
                     "error": "Blocked: URL targets a private or internal network address",
@@ -1055,7 +1092,16 @@ async def web_extract_tool(
         debug_call_data["original_response_size"] = len(json.dumps(response))
         effective_model = model or _get_default_summarizer_model()
         auxiliary_available = check_auxiliary_model()
-        
+        if auxiliary_available and _web_extract_trust_backend():
+            # Contained deployment (web.trust_backend_fetch): the auxiliary
+            # summarizer's HTTP client cannot reach the model through the egress
+            # proxy, so summarization always fails and falls back to a 5K-truncated
+            # slice — silently dropping the rest of long pages. Skip it and return
+            # the FULL raw content; the requesting channel's main model (large
+            # context) summarizes it. Avoids both the truncation and the wasted
+            # failing aux call.
+            auxiliary_available = False
+
         # Process each result with LLM if enabled
         if use_llm_processing and auxiliary_available:
             logger.info("Processing extracted content with LLM (parallel)...")

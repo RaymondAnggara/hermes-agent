@@ -709,3 +709,35 @@ def test_web_requires_env_includes_exa_key():
     from tools.web_tools import _web_requires_env
 
     assert "EXA_API_KEY" in _web_requires_env()
+
+
+class TestWebExtractTrustBackend:
+    """web.trust_backend_fetch gates web_extract's SSRF check to the DNS-free
+    always-blocked floor — for the Phase 4 locked-network re-host where the agent
+    has no direct egress and the backend (Tavily) fetches server-side."""
+
+    def test_flag_defaults_off(self):
+        import tools.web_tools as wt
+        with patch.object(wt, "_load_web_config", return_value={}):
+            assert wt._web_extract_trust_backend() is False
+
+    def test_flag_reads_config(self):
+        import tools.web_tools as wt
+        with patch.object(wt, "_load_web_config", return_value={"trust_backend_fetch": True}):
+            assert wt._web_extract_trust_backend() is True
+
+    def test_floor_still_blocks_metadata_sentinels_without_dns(self):
+        # The floor used in trust_backend mode must keep blocking cloud-metadata
+        # sentinels by hostname / literal IP — no DNS required.
+        from tools.url_safety import is_always_blocked_url
+        assert is_always_blocked_url("http://169.254.169.254/latest/meta-data/") is True
+        assert is_always_blocked_url("http://metadata.google.internal/") is True
+
+    def test_floor_allows_ordinary_host_when_dns_unresolvable(self):
+        # The locked-container case: an ordinary public host can't be resolved
+        # locally → NOT always-blocked → allowed (Tavily fetches it server-side).
+        # This is exactly the path that was failing closed before the fix.
+        import socket
+        from tools import url_safety
+        with patch.object(url_safety.socket, "getaddrinfo", side_effect=socket.gaierror):
+            assert url_safety.is_always_blocked_url("https://elixir-lang.org/") is False

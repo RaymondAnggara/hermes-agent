@@ -1,0 +1,20 @@
+# Egress allowlist (tinyproxy FilterDefaultDeny On + FilterExtended On).
+# Each line is an extended regex matched against the DESTINATION HOST. A host is
+# reachable ONLY if it matches one of these. Keep this set CLOSED and minimal —
+# every addition widens the agent's exfiltration surface. Anchored to avoid a
+# substring like "evil-discord.com.attacker.net" matching.
+#
+# Required for intended function (everything else fails closed by design):
+
+# Model — the host-side model-key proxy (plain HTTP :8787, reached via host.docker.internal).
+^host\.docker\.internal$
+
+# Discord — bot gateway (WS), REST API, and media/CDN.
+(^|\.)discord\.com$
+(^|\.)discord\.gg$
+(^|\.)discordapp\.com$
+(^|\.)discordapp\.net$
+
+# Web research — Tavily does BOTH search and extract server-side (config overlay
+# sets web.search_backend: tavily), so the agent never fetches arbitrary URLs.
+(^|\.)tavily\.com$

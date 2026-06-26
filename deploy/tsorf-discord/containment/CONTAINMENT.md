@@ -156,3 +156,44 @@ the **docker-network default-deny (option 2)** as the next gated deliverable —
 it's the step that turns "security is infrastructure" from mostly-true into
 true for network egress. Tracked as the skipped test
 `test_network_egress_is_default_deny` in `tests/gateway/test_phase4_redteam.py`.
+
+## Network default-deny — BUILT (option 2), gated cutover (see `network/`)
+
+Option 2 is now built under `network/` (edge tooling; nothing imports core):
+
+| File | Role |
+|---|---|
+| `docker-compose.locked.yml` | Two networks: `hermes-internal` (**`internal: true`** — no internet route) holds the agent ONLY; `hermes-egress` (bridge) is touched ONLY by the proxy. Agent runs gateway-only with `HTTP(S)_PROXY → egress-proxy`. Replaces the shipped compose's `network_mode: host`. |
+| `egress-proxy.Dockerfile` + `tinyproxy.conf` + `allowlist.filter` | Alpine+tinyproxy forward proxy, `FilterDefaultDeny On`. The sole route off-box; default-denies every destination except the closed allowlist. |
+| `config.locked.overlay.yaml` | Config keys to apply AT cutover: `model.base_url → host.docker.internal:8787`, `terminal.backend → local`, `web.search_backend → tavily`. |
+| `validate_egress.sh` | Proves isolation with ONLY the proxy + a throwaway client (no agent, no prod impact). |
+
+**Enforcement is at L3, not L7.** The agent is on an `internal: true` network with no
+route to the internet, so a direct socket to any external IP is dropped regardless of
+proxy settings — `validate_egress.sh` tests this directly (direct-no-proxy → no route).
+The proxy then default-denies *which* hosts it will relay (L7). Closed allowlist:
+`host.docker.internal` (model proxy), `*.discord.com/.gg/.discordapp.com/.discordapp.net`
+(bot), `*.tavily.com` (web search+extract, server-side). Everything else fails closed —
+so the tool inventory does not have to be trusted.
+
+**Why these were verified, not assumed:** discord.py routes both REST and the gateway WS
+through `HTTPS_PROXY` via `resolve_proxy_url`/`proxy_kwargs_for_bot`
+(`gateway/platforms/base.py:348,382`) — no adapter change needed. Web search defaults to
+`ddgs`/DuckDuckGo whose Rust client may ignore proxy env, so the overlay switches search
+to Tavily (httpx, proxy-honoring) to keep the allowlist closed and proxy-clean.
+
+### GATED cutover runbook (do NOT run without operator approval)
+1. `docker build -t hermes-agent:locked .` (repo root). Back up `config.yaml`/`.env`.
+2. Apply `config.locked.overlay.yaml`; add the `#coding` scratch repo to `agent.volumes`.
+3. `launchctl stop ai.hermes.gateway` (native bot off).
+4. `cd network && HERMES_UID=$(id -u) HERMES_GID=$(id -g) docker compose -f docker-compose.locked.yml up -d`.
+5. Verify live: Discord connects through the proxy; one msg per #tldr/#learning/#investment
+   round-trips; model path OK; a non-allowlisted egress attempt is dropped (live red-team).
+6. Mirror + commit.
+**Rollback (<1 min):** `docker compose … down` → restore config/.env backups →
+`launchctl enable gui/$(id -u)/ai.hermes.gateway` (it is persistently DISABLED at
+cutover so a reboot can't start a conflicting native bot) → `hermes gateway start`.
+
+**Top risk to confirm live:** the bot-connects-through-proxy step can only be fully proven
+with the real (or a throwaway) bot token, since two live connections on the prod token
+conflict — it is the first thing checked at cutover with rollback armed.

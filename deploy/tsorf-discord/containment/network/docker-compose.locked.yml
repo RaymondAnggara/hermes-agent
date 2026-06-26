@@ -1,0 +1,83 @@
+# Locked-network re-host of the Hermes orchestrator (Phase 4 — network egress default-deny).
+#
+# Replaces the shipped docker-compose.yml's `network_mode: host` (zero isolation)
+# with a two-network design:
+#   * hermes-internal (internal: true) — NO route to the internet. The agent lives
+#     here ONLY. A direct outbound socket from the agent has nowhere to go.
+#   * hermes-egress (bridge) — normal outbound. ONLY the egress-proxy touches it.
+# The agent's sole path off-box is the egress-proxy, which default-denies every
+# destination except deploy/.../network/allowlist.filter.
+#
+# Build the agent image first (from the repo root):  docker build -t hermes-agent:locked .
+# Then:  cd deploy/tsorf-discord/containment/network && \
+#        HERMES_UID=$(id -u) HERMES_GID=$(id -g) docker compose -f docker-compose.locked.yml up -d
+#
+# NOTE: this is the GATED cutover stack. Running `up` here is the live cutover —
+# do NOT run it until the launchd gateway is stopped (see CONTAINMENT.md runbook).
+# The validate_egress.sh harness exercises ONLY the proxy + a throwaway client and
+# never starts this `agent` service, so validation has zero production impact.
+
+services:
+  egress-proxy:
+    build:
+      context: .
+      dockerfile: egress-proxy.Dockerfile
+    image: hermes-egress-proxy:locked
+    container_name: hermes-egress-proxy
+    restart: unless-stopped
+    # The proxy bridges both networks; it is the only thing allowed to reach out.
+    networks:
+      hermes-internal:
+        aliases: [egress-proxy]
+      hermes-egress: {}
+    # Reach the host-side model-key proxy (127.0.0.1:8787 on the host) by name.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  agent:
+    image: hermes-agent:locked
+    container_name: hermes-gateway-locked
+    restart: unless-stopped
+    depends_on:
+      - egress-proxy
+    # Gateway only — NOT the dashboard (it stores API keys / binds a port).
+    command: ["gateway", "run"]
+    # Agent is on the INTERNAL network only → no direct internet route.
+    networks:
+      hermes-internal: {}
+    volumes:
+      - ~/.hermes:/opt/data
+      # #coding build sandbox: same container path as before, so the channel
+      # binding + write-jail (build_workspace: /projects/Tsorf-Agent-Improvement)
+      # are unchanged now that terminal.backend is `local` (runs in THIS container).
+      - /Users/raymond/projects/Tsorf-Agent-Improvement:/projects/Tsorf-Agent-Improvement
+    extra_hosts:
+      # So the model client's http://host.docker.internal:8787 resolves; the actual
+      # connection still goes OUT through the egress-proxy (allowlisted).
+      - "host.docker.internal:host-gateway"
+    environment:
+      - HERMES_UID=${HERMES_UID:-10000}
+      - HERMES_GID=${HERMES_GID:-10000}
+      # Force ALL agent HTTP(S) through the egress proxy. discord.py
+      # (resolve_proxy_url) + httpx (Tavily, model client) all honor these.
+      - HTTP_PROXY=http://egress-proxy:8888
+      - HTTPS_PROXY=http://egress-proxy:8888
+      - ALL_PROXY=http://egress-proxy:8888
+      - http_proxy=http://egress-proxy:8888
+      - https_proxy=http://egress-proxy:8888
+      - all_proxy=http://egress-proxy:8888
+      # Do not proxy the container's own loopback (internal services / health).
+      - NO_PROXY=localhost,127.0.0.1,::1
+      - no_proxy=localhost,127.0.0.1,::1
+      # The agent never holds the real model key (W3): placeholder only.
+      - OPENCODE_GO_API_KEY=sk-LOCAL-PROXY-PLACEHOLDER
+
+networks:
+  hermes-internal:
+    driver: bridge
+    internal: true            # <-- the enforcement: no gateway to the outside
+    ipam:
+      config:
+        - subnet: 172.31.7.0/24   # pinned; matches tinyproxy's Allow ACL
+  hermes-egress:
+    driver: bridge
