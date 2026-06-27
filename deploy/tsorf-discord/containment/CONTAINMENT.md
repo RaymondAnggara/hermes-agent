@@ -197,3 +197,37 @@ cutover so a reboot can't start a conflicting native bot) → `hermes gateway st
 **Top risk to confirm live:** the bot-connects-through-proxy step can only be fully proven
 with the real (or a throwaway) bot token, since two live connections on the prod token
 conflict — it is the first thing checked at cutover with rollback armed.
+
+## Phase 5b secrets-hardening — platform tokens out of plaintext `.env` (LIVE 2026-06-27)
+
+`DISCORD_BOT_TOKEN` and `TAVILY_API_KEY` were removed from the mounted `~/.hermes/.env`
+(which the agent can `cat` at `/opt/data/.env`) and are now stored in Bitwarden
+("Hermes Agent" project) and **injected into the locked container's process env at
+launch** by `network/launch_locked.sh`. The Bitwarden **bootstrap** (`BWS_ACCESS_TOKEN`,
+read from the Keychain item `hermes-bws-access-token/bws`) stays on the host launcher and
+**never enters the container** — putting it inside the prompt-injectable agent would
+expose the whole vault, including the model key W3 removed.
+
+**Honest residual:** discord.py and the Tavily client need their tokens in-process, so the
+agent can still read its own `/proc/self/environ`. This removes plaintext-at-rest in the
+mounted volume and keeps the bootstrap off the container; it does NOT hide a websocket-auth
+token from the process that opens the socket. The egress value-redaction layer
+(`gateway/secret_egress.py`) scrubs the literal values from outbound Discord messages.
+
+**DEPLOY/RESTART MODEL CHANGED for the locked stack:** bring the stack up/restart it with
+`network/launch_locked.sh` (it fetches the tokens from Bitwarden and injects them), **not**
+a bare `docker compose up`. The compose interpolates `${DISCORD_BOT_TOKEN:?}` /
+`${TAVILY_API_KEY:?}` — the `:?` makes a tokenless `docker compose up` **fail closed**
+rather than start a silently-broken bot. `./launch_locked.sh --dry-run` resolves+confirms
+the tokens (by length) without touching docker. Code change → rebuild image then
+`launch_locked.sh`; config change → `launch_locked.sh` (recreates the `agent` service,
+leaves `egress-proxy` up). Tests: `tests/gateway/test_phase5b_secrets_hardening.py` (9).
+
+**Rollback (<1 min):** the simplest correct revert is just to **keep using
+`launch_locked.sh`** — it always works. To go fully back to the plaintext-`.env` model:
+(1) `git checkout` the compose `environment:` additions (remove the two `${..:?}` lines —
+compose interpolation reads the launcher's SHELL env, not the agent-runtime `~/.hermes/.env`,
+so the `:?` is NOT satisfied just by restoring `.env`); (2) restore
+`~/.hermes/.env.bak.20260627-101747` (re-adds the two tokens as plaintext); (3) bare
+`docker compose -f network/docker-compose.locked.yml up -d` (the agent reads the tokens from
+the mounted `.env` at runtime as before). Bitwarden keeps its copies either way.

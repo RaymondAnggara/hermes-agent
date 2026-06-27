@@ -71,6 +71,13 @@ services:
       - no_proxy=localhost,127.0.0.1,::1
       # The agent never holds the real model key (W3): placeholder only.
       - OPENCODE_GO_API_KEY=sk-LOCAL-PROXY-PLACEHOLDER
+      # Phase 5b secrets-hardening: the platform tokens are NOT in the mounted
+      # /opt/data/.env anymore. They are injected here from the host launcher
+      # (launch_locked.sh), which fetched them from Bitwarden. The `:?` makes
+      # compose FAIL CLOSED if they are unset — a bare `docker compose up` that
+      # forgot the launcher refuses to start a token-less (silently broken) bot.
+      - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN:?run launch_locked.sh (injects tokens from Bitwarden) instead of bare compose up}
+      - TAVILY_API_KEY=${TAVILY_API_KEY:?run launch_locked.sh (injects tokens from Bitwarden) instead of bare compose up}
 
 networks:
   hermes-internal:
