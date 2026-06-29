@@ -233,12 +233,18 @@ everything:
 | Add leverage to boost returns | ruin risk | deferred indefinitely; own future gate |
 | Strategy raises its own size | bypasses safety | caps override strategy, fail-closed |
 
-## 13. Open items / placeholders (operator)
+## 13. Resolved + remaining items (2026-06-29)
 
-- **Caps numbers** (TRADE_SAFETY_DESIGN §Q3): `max_order_notional`, `max_period_notional`,
-  `max_position_per_symbol`, `allowed_symbols` (start BTC/ETH?), `HARD_CEILING`.
-- **Exchange:** Bybit *recommended* (verifiable withdrawal-disabled keys + strong demo) —
-  confirm you can open an account (Indonesia availability) before we commit.
+**Resolved:**
+- **Exchange: Bybit** (account created + verified).
+- **Caps (v1 / $100 account):** `max_order_notional: 20`, `max_position_per_symbol: 40`,
+  `max_period_notional: 100` (24h), `allowed_symbols: ["BTC","ETH"]`, `HARD_CEILING: 90`
+  (total-exposure backstop). Sized to actually bind on a $100 spot account; v1 goal is
+  validation, not profit. Scales up later via operator-gated config edit.
+- **Channel: dedicated `#trading`**; `#investment` stays advisory research feeder.
+- **Key handling:** demo key host-injected; live key via signing proxy.
+
+**Still to pin (not blocking the first build step):**
 - **Trusted market-data source** to allowlist (Bybit's own market data is the simplest).
 - Initial signal set + default trust weights to start from (before learning kicks in).
 

@@ -78,26 +78,37 @@ risk_gate(intent, account_state, caps) -> Decision(accept|reject, reason, caps_a
   reject if est_notional(intent) > caps.max_order_notional
   reject if rolling_24h_notional + est_notional > caps.max_period_notional
   reject if projected_position(symbol) > caps.max_position_per_symbol
+  reject if total_open_exposure(all symbols) + est_notional > HARD_CEILING   # global backstop
   reject if intent.symbol not in caps.allowed_symbols
   reject if intent unparseable / non-finite / negative qty
-  else accept, with an ABSOLUTE hard ceiling that config cannot exceed
+  else accept
 ```
 
-- Caps come from `config.yaml` (`trading.caps`), but code clamps them to an absolute
+- Caps come from `config.yaml` (`trading.caps`), but code clamps every cap to the absolute
   `HARD_CEILING` constant — config can only make caps *tighter*, never looser.
+- **`HARD_CEILING` governs TOTAL exposure** = the sum of all open positions across every
+  symbol, so it stays a real backstop as `allowed_symbols` grows (N symbols × per-symbol cap
+  can otherwise creep past it). No single config edit or bug can deploy more than this.
 - `allowed_symbols` is an explicit allowlist (no "trade anything").
-- Rolling-24h notional is read from the audit store (durable across restarts).
+- Rolling-24h notional + open exposure are read from the audit store (durable across restarts).
+
+**Confirmed caps (v1, $100 Bybit spot account — 2026-06-29).** Sized *below* the account so
+they actually bind (spot/no-leverage already physically caps loss at the $100 balance):
+`max_order_notional: 20`, `max_position_per_symbol: 40`, `max_period_notional: 100` (24h),
+`allowed_symbols: ["BTC","ETH"]`, `HARD_CEILING: 90` (total exposure). These scale up via an
+operator-gated config edit (+ `HARD_CEILING` bump) when the account is funded further. At $100
+the explicit goal is **validation, not profit** — fees/min-order-sizes eat a large % at this
+size, so v1 success = "plumbing works, caps hold, honest track record," not returns.
 
 ## 5. Keys & egress (extends Phase 5b secrets-hardening, already live)
 
 - **Storage:** trade-only exchange key/secret in Bitwarden ("Hermes Agent"), e.g.
   `EXCHANGE_API_KEY` / `EXCHANGE_API_SECRET` (+ passphrase if the exchange needs one).
-- **Injection:** the same `launch_locked.sh` host-injection that now handles
-  `DISCORD_BOT_TOKEN`/`TAVILY_API_KEY` — add the exchange vars to its fetch list and to the
-  compose `${..:?}` block. Bootstrap stays on host. (For a fund-moving-class key we may
-  prefer a **key-injecting proxy** like the model-key proxy so the agent never holds even
-  the trade key — decide at build time; trade-only keys are lower-blast-radius than the
-  model key, so host-injection MAY be acceptable. Flag for operator.)
+- **Injection (DECIDED):** **host-injection for the Bybit *demo* key** (can't touch real
+  money → low stakes), via the same `launch_locked.sh` that handles `DISCORD_BOT_TOKEN`/
+  `TAVILY_API_KEY`. For the **live** key → a **signing proxy** (agent never holds the secret;
+  models the Phase-4 model-key proxy, implementing Bybit's HMAC-SHA256 request signing). The
+  live proxy is built only at the live step, not before.
 - **Egress (I6):** add the exchange REST host to `network/allowlist.filter`. This is the
   single change that lets the agent reach the exchange at all — **guardrail-affecting**,
   so: separate commit, loud flag, operator confirm, and it goes in LAST (after paper mode
@@ -109,11 +120,12 @@ risk_gate(intent, account_state, caps) -> Decision(accept|reject, reason, caps_a
 
 ## 6. Withdrawal-disabled verification (I1) — don't trust the dashboard
 
-At tool-registration / startup, probe the key's own permissions via the exchange's
-key-info endpoint (most majors expose one) and **fail-closed** (refuse to register the trade
-tool) unless it positively reports withdrawal/transfer DISABLED. If the exchange has no
-permission-introspection endpoint, that exchange is **not eligible** for automated trading
-under this design — document and pick another. "We set it in the UI" is not enforcement.
+At tool-registration / startup, probe the key's own permissions and **fail-closed** (refuse to
+register the trade tool) unless it positively reports withdrawal/transfer DISABLED. **Bybit
+(confirmed exchange)** exposes exactly this: `GET /v5/user/query-api` returns a `permissions`
+object — we require `"Withdraw"`, `"AccountTransfer"`, and `"SubMemberTransfer"` to all be
+**absent** from `permissions.Wallet` (and may also assert `readOnly`/`ips` as configured).
+"We set it in the UI" is not enforcement — the bot verifies it every startup.
 
 ## 7. Paper mode (I3) — first deliverable, gated on its own
 
@@ -132,7 +144,8 @@ under this design — document and pick another. "We set it in the UI" is not en
 - No margin/leverage/derivatives in v1 (spot only, long-only unless operator asks).
 - No portfolio rebalancing, no stop-loss automation (those are autonomous actions → later,
   separate gates if ever).
-- No exchange chosen, no key created, no allowlist change, no code — pending STOP GATE 5.
+- Exchange chosen (Bybit) + caps set, but **no key created, no allowlist change, no code** —
+  decisions recorded; build still pending past STOP GATE 5.
 
 ## 9. Build order if approved (each its own small, reviewable step)
 
@@ -146,15 +159,19 @@ under this design — document and pick another. "We set it in the UI" is not en
 8. **Allowlist the exchange host** (guardrail-affecting, loud flag, operator confirm). ← gate
 9. First live order: smallest possible size, operator-confirmed, watched, with `!stop` armed.
 
-## Open questions for the operator (STOP GATE 5)
+## Decisions resolved at STOP GATE 5 discussion (2026-06-29)
 
-1. **Exchange** (deferred): when ready — Coinbase / Kraken / Binance / other? Drives the
-   adapter, the permission-probe endpoint, and key shape. (Kraken & Coinbase expose
-   key-permission introspection + a validate/no-execute order flag useful for dry-run.)
-2. **Trade-key handling:** host-injection (like the platform tokens) vs a dedicated
-   key-injecting proxy (agent never holds it). Recommend proxy if the exchange allows
-   header/HMAC injection at a proxy; otherwise host-injection + trade-only key.
-3. **Caps:** initial `max_order_notional`, `max_period_notional` (24h), `max_position_per_symbol`,
-   `allowed_symbols`, and the absolute `HARD_CEILING`.
-4. **Channel:** dedicated `#trading`, or a gated live-mode on `#investment`?
-5. Confirm: **paper-mode first, no live order until a separate explicit go-ahead.** (Default.)
+1. **Exchange: Bybit** — account created + verified. Verifiable withdrawal-disabled keys
+   (`GET /v5/user/query-api`, §6) + strong demo env (`api-demo.bybit.com`, 50k simulated USDT).
+2. **Trade-key handling:** host-injection for the **demo** key; **signing proxy** for the
+   **live** key (agent never holds it; HMAC-SHA256 signing). See §5.
+3. **Caps (v1 / $100):** `max_order_notional: 20`, `max_position_per_symbol: 40`,
+   `max_period_notional: 100` (24h), `allowed_symbols: ["BTC","ETH"]`, `HARD_CEILING: 90`
+   (total-exposure backstop). See §4. Scale up later via operator-gated config edit.
+4. **Channel: dedicated `#trading`** (the trade tool lives only here; `#investment` stays
+   advisory/no-keys and acts as the research feeder).
+5. **Confirmed: paper-mode first, no live order until a separate explicit go-ahead.**
+
+> Still STOP GATE 5: these decisions are recorded, but NO trading code/keys/allowlist change
+> exists. The strategy/confidence model + data model are in [`STRATEGY_DESIGN.md`](./STRATEGY_DESIGN.md).
+> The first build step (pure confidence-model + SQLite schema, no keys/money) is now fully specced.
