@@ -50,18 +50,16 @@ def test_unconfigured_caps_reject_everything():
 
 
 @pytest.mark.parametrize(
-    "field",
-    ["max_order_notional", "max_position_per_symbol", "max_period_notional", "hard_ceiling"],
+    "bad",
+    [
+        Caps(0.0, 40.0, 100.0, ("BTC",), 90.0),  # max_order_notional
+        Caps(20.0, 0.0, 100.0, ("BTC",), 90.0),  # max_position_per_symbol
+        Caps(20.0, 40.0, 0.0, ("BTC",), 90.0),  # max_period_notional
+        Caps(20.0, 40.0, 100.0, ("BTC",), 0.0),  # hard_ceiling
+    ],
+    ids=["max_order_notional", "max_position_per_symbol", "max_period_notional", "hard_ceiling"],
 )
-def test_any_non_positive_cap_fails_closed(field):
-    bad = Caps(
-        max_order_notional=20.0,
-        max_position_per_symbol=40.0,
-        max_period_notional=100.0,
-        allowed_symbols=("BTC",),
-        hard_ceiling=90.0,
-    )
-    bad = type(bad)(**{**bad.__dict__, field: 0.0})
+def test_any_non_positive_cap_fails_closed(bad):
     assert not risk_gate(_order(price=1.0), EMPTY, bad).accepted
 
 
