@@ -36,14 +36,18 @@ _SIDES = ("buy", "sell")
 
 @dataclass(frozen=True)
 class OrderIntent:
-    """A structured, parsed order. ``price`` is an estimated unit price used to
-    size the order's notional (``qty * price``); upstream resolves it from
-    read-only market data."""
+    """A structured, parsed order. ``price`` is the unit price used to size the
+    order's notional (``qty * price``): the limit price for a limit order, or
+    the resolved/estimated market price for a market order (resolved upstream
+    from read-only market data). ``order_type`` and ``tif`` are carried metadata
+    for the eventual exchange call; the risk gate only uses side/symbol/notional."""
 
     side: str
     symbol: str
     qty: float
     price: float
+    order_type: str = "limit"  # "limit" | "market"
+    tif: str = "GTC"  # time-in-force
 
 
 @dataclass(frozen=True)

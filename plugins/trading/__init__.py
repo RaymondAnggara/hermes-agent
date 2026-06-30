@@ -11,11 +11,17 @@ money, keys, the exchange, nor Discord:
 - :mod:`plugins.trading.schema` — the ``trading.db`` SQLite schema (separate
   from ``state.db`` / ``kanban.db``).
 
+Build step 2 adds the order parser + planner (:mod:`plugins.trading.orders`),
+the ``trading.db`` data-access layer (:mod:`plugins.trading.store`) — which
+derives the account state the risk gate consumes — and the read-only registry /
+journal command handlers (:mod:`plugins.trading.commands`).
+
 It is intentionally NOT a registered plugin: there is no ``plugin.yaml``, so the
 plugin loader will not discover it and no trade tool is exposed on any channel.
-Wiring (executors, commands, the service-gated tool, keys) arrives in later,
-separately-gated build steps. See ``deploy/tsorf-discord/trading/`` for the
-TRADE_SAFETY_DESIGN / STRATEGY_DESIGN this implements.
+Discord wiring (the service-gated ``/trade`` flow on ``#trading``), executors,
+and keys arrive in later, separately-gated build steps. See
+``deploy/tsorf-discord/trading/`` for the TRADE_SAFETY_DESIGN / STRATEGY_DESIGN
+this implements.
 """
 
 from __future__ import annotations
@@ -28,6 +34,13 @@ from plugins.trading.confidence import (
     confidence_z,
     sigmoid,
 )
+from plugins.trading.orders import (
+    OrderParseError,
+    OrderPlan,
+    RiskRejected,
+    parse_order,
+    plan_order,
+)
 from plugins.trading.risk_gate import (
     HARD_CEILING,
     AccountState,
@@ -38,6 +51,7 @@ from plugins.trading.risk_gate import (
     est_notional,
     risk_gate,
 )
+from plugins.trading.store import TradingStore
 
 __all__ = [
     "HARD_CEILING",
@@ -46,12 +60,18 @@ __all__ = [
     "Caps",
     "Decision",
     "OrderIntent",
+    "OrderParseError",
+    "OrderPlan",
+    "RiskRejected",
     "Signal",
+    "TradingStore",
     "calibrate",
     "clamp_caps",
     "confidence_p",
     "confidence_z",
     "est_notional",
+    "parse_order",
+    "plan_order",
     "risk_gate",
     "sigmoid",
 ]
