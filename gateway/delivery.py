@@ -316,13 +316,20 @@ class DeliveryRouter:
         if not target.chat_id:
             raise ValueError(f"No chat ID for {target.platform.value} delivery")
         
-        # Guard: truncate oversized cron output to stay within platform limits
-        if len(content) > MAX_PLATFORM_OUTPUT:
+        # Guard: truncate oversized cron output to stay within platform limits.
+        # Budget is configurable (gateway.max_platform_output); the module
+        # constant is the fallback when config doesn't carry a usable int (e.g.
+        # a mock/partial config in tests, or a malformed value).
+        max_output = getattr(self.config, "max_platform_output", MAX_PLATFORM_OUTPUT)
+        if not isinstance(max_output, int) or isinstance(max_output, bool) or max_output <= 0:
+            max_output = MAX_PLATFORM_OUTPUT
+        if len(content) > max_output:
             job_id = (metadata or {}).get("job_id", "unknown")
             saved_path = self._save_full_output(content, job_id)
             logger.info("Cron output truncated (%d chars) — full output: %s", len(content), saved_path)
+            visible = max(0, max_output - 200)  # leave room for the truncation note
             content = (
-                content[:TRUNCATED_VISIBLE]
+                content[:visible]
                 + f"\n\n... [truncated, full output saved to {saved_path}]"
             )
         

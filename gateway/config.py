@@ -525,6 +525,15 @@ class GatewayConfig:
     # raw passthrough.
     filter_silence_narration: bool = True
 
+    # Max characters of cron output delivered to a messaging platform before it
+    # is truncated (full version always saved to the cron output file). Content
+    # under this budget still splits into multiple platform messages as needed
+    # (Discord's own ~2000-char/message limit is separate). Set high to
+    # effectively disable truncation; kept bounded as a guard against a runaway/
+    # looping job spamming a channel. Tunable via config.yaml
+    # ``gateway.max_platform_output`` without an image rebuild.
+    max_platform_output: int = 16000
+
     # STT settings
     stt_enabled: bool = True  # Whether to auto-transcribe inbound voice messages
 
@@ -649,6 +658,7 @@ class GatewayConfig:
             "sessions_dir": str(self.sessions_dir),
             "always_log_local": self.always_log_local,
             "filter_silence_narration": self.filter_silence_narration,
+            "max_platform_output": self.max_platform_output,
             "stt_enabled": self.stt_enabled,
             "group_sessions_per_user": self.group_sessions_per_user,
             "thread_sessions_per_user": self.thread_sessions_per_user,
@@ -861,6 +871,11 @@ def load_gateway_config() -> GatewayConfig:
 
             if "max_concurrent_sessions" in yaml_cfg:
                 gw_data["max_concurrent_sessions"] = yaml_cfg["max_concurrent_sessions"]
+
+            if isinstance(gateway_section, dict) and "max_platform_output" in gateway_section:
+                gw_data["max_platform_output"] = gateway_section["max_platform_output"]
+            if "max_platform_output" in yaml_cfg:
+                gw_data["max_platform_output"] = yaml_cfg["max_platform_output"]
 
             streaming_cfg = yaml_cfg.get("streaming")
             if not isinstance(streaming_cfg, dict):

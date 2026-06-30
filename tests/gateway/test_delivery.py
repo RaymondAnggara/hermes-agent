@@ -281,3 +281,42 @@ async def test_platform_send_failure_raises_for_delivery_result(tmp_path, monkey
 
     with pytest.raises(RuntimeError, match="route failed"):
         await router._deliver_to_platform(target, "hello", metadata={"telegram_reply_to_message_id": "9001"})
+
+
+@pytest.mark.asyncio
+async def test_cron_output_truncated_at_configured_cap(tmp_path, monkeypatch):
+    """Output over gateway.max_platform_output is truncated, with the full
+    version saved to a file and a pointer note appended."""
+    monkeypatch.setattr("gateway.delivery.get_hermes_home", lambda: tmp_path)
+    adapter = RecordingAdapter()
+    cfg = GatewayConfig(max_platform_output=500)
+    router = DeliveryRouter(cfg, adapters={Platform.DISCORD: adapter})
+    target = DeliveryTarget.parse("discord:123")
+
+    long_content = "x" * 2000
+    await router._deliver_to_platform(target, long_content, metadata={"job_id": "job1"})
+
+    sent = adapter.calls[0]["content"]
+    assert "[truncated, full output saved to" in sent
+    # Visible budget = cap - 200 (room for the note), so the body is bounded.
+    body = sent.split("\n\n... [truncated", 1)[0]
+    assert body == "x" * (500 - 200)
+    # Full content persisted to the cron output dir.
+    saved = list((tmp_path / "cron" / "output").glob("*"))
+    assert saved, "full output should be saved when truncated"
+
+
+@pytest.mark.asyncio
+async def test_high_cap_delivers_full_content_untruncated(tmp_path, monkeypatch):
+    """A high max_platform_output (the new default intent) delivers the whole
+    output without truncation."""
+    monkeypatch.setattr("gateway.delivery.get_hermes_home", lambda: tmp_path)
+    adapter = RecordingAdapter()
+    router = DeliveryRouter(GatewayConfig(), adapters={Platform.DISCORD: adapter})
+    target = DeliveryTarget.parse("discord:123")
+
+    content = "y" * 8000  # under the 16000 default
+    await router._deliver_to_platform(target, content, metadata={"job_id": "job2"})
+
+    assert adapter.calls[0]["content"] == content
+    assert "truncated" not in adapter.calls[0]["content"]
