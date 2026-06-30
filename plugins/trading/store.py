@@ -228,6 +228,13 @@ class TradingStore:
 
     # ---- reads for the journal / confidence command --------------------
 
+    def trade_by_idempotency_key(self, key: str) -> dict[str, Any] | None:
+        """The trade with this idempotency key, or None — for idempotent replay."""
+        row = self.conn.execute(
+            "SELECT * FROM trades WHERE idempotency_key = ?", (key,)
+        ).fetchone()
+        return dict(row) if row is not None else None
+
     def recent_trades(self, limit: int = 10) -> list[dict[str, Any]]:
         rows = self.conn.execute(
             "SELECT * FROM trades ORDER BY created_at DESC, id DESC LIMIT ?",

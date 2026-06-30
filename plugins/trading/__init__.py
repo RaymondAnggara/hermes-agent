@@ -34,6 +34,7 @@ from plugins.trading.confidence import (
     confidence_z,
     sigmoid,
 )
+from plugins.trading.executor import FillResult, PaperExecutor, paper_trade
 from plugins.trading.orders import (
     OrderParseError,
     OrderPlan,
@@ -59,9 +60,11 @@ __all__ = [
     "CalibrationBand",
     "Caps",
     "Decision",
+    "FillResult",
     "OrderIntent",
     "OrderParseError",
     "OrderPlan",
+    "PaperExecutor",
     "RiskRejected",
     "Signal",
     "TradingStore",
@@ -70,6 +73,7 @@ __all__ = [
     "confidence_p",
     "confidence_z",
     "est_notional",
+    "paper_trade",
     "parse_order",
     "plan_order",
     "risk_gate",
