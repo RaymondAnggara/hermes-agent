@@ -58,6 +58,12 @@ services:
     environment:
       - HERMES_UID=${HERMES_UID:-10000}
       - HERMES_GID=${HERMES_GID:-10000}
+      # Container OS clock. Without this the image defaults to UTC, so shell
+      # `date` and Python datetime.now() (what the agent runs when asked the
+      # wall-clock time) report UTC even though Hermes' own time (crons,
+      # system-prompt date via hermes_time) follows config.yaml `timezone`.
+      # Keep this in sync with config.yaml `timezone`.
+      - TZ=Asia/Jakarta
       # Force ALL agent HTTP(S) through the egress proxy. discord.py
       # (resolve_proxy_url) + httpx (Tavily, model client) all honor these.
       - HTTP_PROXY=http://egress-proxy:8888
