@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch, MagicMock
 
 import pytest
 
-from cron.scheduler import _resolve_origin, _resolve_delivery_target, _deliver_result, _send_media_via_adapter, run_job, SILENT_MARKER, _build_job_prompt
+from cron.scheduler import _resolve_origin, _resolve_delivery_target, _deliver_result, _send_media_via_adapter, run_job, SILENT_MARKER, _build_job_prompt, _summarize_cron_failure_for_delivery
 from tools.env_passthrough import clear_env_passthrough
 from tools.credential_files import clear_credential_files
 
@@ -3376,3 +3376,37 @@ class TestHomeTargetEnvVarRegistry:
         from cron.scheduler import _HOME_TARGET_ENV_VARS
 
         assert _HOME_TARGET_ENV_VARS.get("whatsapp") == "WHATSAPP_HOME_CHANNEL"
+
+
+class TestSummarizeCronFailureForDelivery:
+    """The chat-delivery summarizer must classify failures honestly — in
+    particular, the inactivity watchdog is not a provider/fallback failure."""
+
+    def test_inactivity_watchdog_not_labeled_provider_timeout(self):
+        # Exact shape raised by run_job's watchdog (see scheduler.py).
+        err = (
+            "Cron job 'Good Morning Summary' idle for 1568s (limit 600s) "
+            "— last activity: executing 3 tools concurrently: "
+            "web_search, web_search, web_extract"
+        )
+        msg = _summarize_cron_failure_for_delivery(
+            {"name": "Good Morning Summary"}, err
+        )
+        assert "stalled" in msg.lower()
+        assert "inactivity timeout" in msg.lower()
+        # Must NOT blame the provider or the fallback chain.
+        assert "provider timeout" not in msg.lower()
+        assert "fallback chain" not in msg.lower()
+
+    def test_real_provider_timeout_still_labeled_provider(self):
+        err = "httpx.ReadTimeout: request timed out after 180s"
+        msg = _summarize_cron_failure_for_delivery({"name": "Job"}, err)
+        assert "provider timeout" in msg.lower()
+        assert "fallback chain was exhausted" in msg.lower()
+
+    def test_rate_limit_unchanged(self):
+        msg = _summarize_cron_failure_for_delivery(
+            {"name": "Job"}, "429 Too Many Requests: rate limit exceeded"
+        )
+        assert "rate limit" in msg.lower()
+        assert "fallback chain" in msg.lower()

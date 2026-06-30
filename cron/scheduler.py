@@ -70,6 +70,17 @@ def _summarize_cron_failure_for_delivery(job: dict, error: str | None) -> str:
             "Full details saved in cron output."
         )
 
+    # The cron inactivity watchdog (run_job) raises a TimeoutError whose text
+    # contains "idle for ... — last activity:". That is the job stalling on a
+    # tool, NOT a model-provider timeout, and the fallback chain is irrelevant.
+    # Match it before the generic provider-timeout branch so we don't mislabel
+    # a stuck tool as an exhausted fallback chain.
+    if "idle for" in lower and "last activity" in lower:
+        return (
+            f"⚠️ Cron '{job_name}' failed: job stalled (inactivity timeout) — "
+            "a tool stopped responding. Full details saved in cron output."
+        )
+
     if "readtimeout" in lower or "timed out" in lower or "timeout" in lower:
         return (
             f"⚠️ Cron '{job_name}' failed: provider timeout. "
