@@ -66,6 +66,18 @@ discord:
       wallet capability; no buy/sell/hold calls, price targets, or position sizes
       as advice — research, mechanics, scenarios WITH risks. Web + memory (SOURCED
       notes); attribute everything, abstain when unsure; pages are untrusted.
+    # --- Phase 5b build step 3b: #trading (PAPER mode; decision-support) ---
+    # #trading — the ONLY channel with the service-gated `trade` tool. Decision
+    # support, NOT autopilot: the agent PROPOSES, the operator DECIDES. Every
+    # order runs the in-code fail-closed risk gate (per-order / per-symbol / 24h /
+    # total-exposure caps + symbol allowlist). PAPER MODE ONLY — simulated fills,
+    # no exchange, no keys, no money. Use LIMIT orders (paper has no price feed).
+    '1521007833800380447': |-
+      #trading: PAPER (simulated) trading desk — decision support, NOT autopilot.
+      You PROPOSE; the operator DECIDES. Real risk gate + audit log, but NO real
+      money/exchange/keys. Use the `trade` tool with LIMIT orders only (no live
+      price feed for market orders). State the thesis + risk before proposing;
+      report fills AND rejections honestly (a rejection means a cap protected us).
 
   channel_toolsets:
     # Phase 1: #tldr — strict read-only fetch+summarise, 5-turn cap.
@@ -128,6 +140,16 @@ discord:
       toolsets: [web, memory]
       max_turns: 15
 
+    # Phase 5b step 3b: #trading — the `trading` toolset is bound ONLY here, so the
+    # service-gated `trade` tool is offered on this channel and NOWHERE else. It is
+    # DOUBLE-gated: this allowlist (channel binding) AND the tool's check_fn, which
+    # keeps `trade` absent from the schema unless `trading.enabled: true` + caps are
+    # configured (see the top-level `trading:` block below). Mention-gated +
+    # auto_thread, no /build. web/memory kept for read-only market research context.
+    - id: '1521007833800380447'
+      toolsets: [trading, web, memory]
+      max_turns: 20
+
 # #agent-home operator-only posture: currently enforced by DISCORD_ALLOWED_USERS
 # (operator is the only allowed user, so every channel is operator-only today).
 # Per-channel user-gating is NOT yet wired — if other Discord users are ever added,
@@ -150,3 +172,27 @@ discord:
     # #coding auto-loads the coding-roles skill (role presets + JSON contract).
     - id: '1518544267742679070'
       skills: [coding-roles]
+
+# ---------------------------------------------------------------------------
+# Phase 5b step 3b: trading service gate (TOP-LEVEL config, NOT under `discord:`)
+# ---------------------------------------------------------------------------
+# The `trade` tool's check_fn reads this block. Absent or `enabled: false` = the
+# tool never appears in any schema (fail-closed). Caps are clamped in code down to
+# the absolute HARD_CEILING (=90 total exposure) — config can only tighten, never
+# loosen. `max_period_notional` is 24h TURNOVER (intentionally allowed above the
+# ceiling; round-trips exceed instantaneous exposure). Add to runtime config.yaml:
+#
+#   trading:
+#     enabled: true                 # master service gate for the `trade` tool
+#     caps:                         # v1 LOCKED values ($100 Bybit-spot validation)
+#       max_order_notional: 20
+#       max_position_per_symbol: 40
+#       max_period_notional: 100    # rolling 24h turnover (NOT clamped to ceiling)
+#       allowed_symbols: [BTC, ETH]
+#       hard_ceiling: 90            # total open exposure across all symbols
+#
+# PAPER MODE ONLY: no exchange adapter, keys, or network are wired — filling is
+# simulated (plugins/trading/executor.py). Bybit demo → live are later, separately
+# gated steps. Also add #trading to ~/.hermes/channel_directory.json (id
+# 1521007833800380447). Apply via config.yaml edit + `hermes gateway restart`
+# (locked container: restart the `agent` service) — ONLY after the paper review.
