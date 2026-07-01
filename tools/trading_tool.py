@@ -28,8 +28,11 @@ from typing import Any
 from plugins.trading import (
     HARD_CEILING,
     Caps,
+    MarketDataError,
     TradingStore,
     clamp_caps,
+    fetch_ohlc,
+    market_read,
     paper_trade,
 )
 from tools.registry import registry, tool_error, tool_result
@@ -164,4 +167,76 @@ registry.register(
     handler=_handle_trade,
     check_fn=_check_trading_enabled,
     emoji="📈",
+)
+
+
+MARKET_READ_SCHEMA = {
+    "name": "market_read",
+    "description": (
+        "Get a READ-ONLY market read on an allowed symbol (BTC or ETH): fetches "
+        "recent prices from CoinGecko, computes trend + momentum signals, and "
+        "runs them through the confidence model. Returns a directional lean "
+        "(bullish/bearish/neutral), a confidence %, the signals behind it, and "
+        "ALWAYS `n_samples` + `calibrated` — the number is UNCALIBRATED today "
+        "(not yet validated against real outcomes), so present it as decision "
+        "support, not a reliable probability. This places NO order and moves no "
+        "money; it is research only. Cite it honestly, including the caveat."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "symbol": {
+                "type": "string",
+                "description": "The symbol to read, e.g. 'BTC' or 'ETH'.",
+            },
+        },
+        "required": ["symbol"],
+    },
+}
+
+
+def _handle_market_read(args: dict, **kwargs: Any) -> str:
+    """Fetch data + compute a read for one symbol. Read-only; fail-closed."""
+    symbol = (args or {}).get("symbol")
+    if not symbol or not isinstance(symbol, str):
+        return tool_error("market_read requires a 'symbol', e.g. 'BTC'")
+    symbol = symbol.upper().strip()
+
+    # Scope reads to symbols we might actually trade (the caps allowlist), so the
+    # advisor never researches things outside the trading universe.
+    caps = _load_caps()
+    if caps is not None and symbol not in caps.allowed_symbols:
+        return tool_error(
+            f"symbol {symbol} not in allowlist {caps.allowed_symbols}"
+        )
+
+    try:
+        candles = fetch_ohlc(symbol)
+    except MarketDataError as e:
+        return tool_error(f"market data unavailable: {e}")
+
+    store = TradingStore.open()
+    try:
+        read = market_read(symbol, candles, store)
+    finally:
+        store.close()
+
+    logger.info(
+        "market_read %s: lean=%s p=%.3f (calibrated=%s, n=%s)",
+        symbol,
+        read.get("lean"),
+        read.get("confidence_p") or 0.0,
+        read.get("calibrated"),
+        read.get("n_samples"),
+    )
+    return tool_result(read)
+
+
+registry.register(
+    name="market_read",
+    toolset="trading",
+    schema=MARKET_READ_SCHEMA,
+    handler=_handle_market_read,
+    check_fn=_check_trading_enabled,
+    emoji="📊",
 )

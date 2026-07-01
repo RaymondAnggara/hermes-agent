@@ -15,8 +15,17 @@ import pytest
 
 import tools.trading_tool as tt
 from plugins.trading import HARD_CEILING
+from plugins.trading.marketdata import Candle, MarketDataError
 from plugins.trading.store import TradingStore
 from tools.registry import registry
+
+
+def _candles(closes):
+    return [Candle(1_700_000_000_000 + i * 14_400_000, c, c, c, c) for i, c in enumerate(closes)]
+
+
+def _uptrend():
+    return _candles([100.0 + i for i in range(40)])
 
 V1_CAPS_CFG = {
     "enabled": True,
@@ -154,4 +163,47 @@ def test_handler_missing_order_arg_is_tool_error(enabled):
 def test_handler_fail_closed_when_caps_unconfigured(monkeypatch):
     monkeypatch.setattr(tt, "_trading_config", lambda: {"enabled": True})
     out = json.loads(tt._handle_trade({"order": "buy 1 BTC limit 10"}))
+    assert "error" in out
+
+
+# ---- market_read tool -----------------------------------------------------
+
+
+def test_market_read_registered_under_trading_toolset():
+    entry = registry.get_entry("market_read")
+    assert entry is not None
+    assert entry.toolset == "trading"
+    assert entry.check_fn is tt._check_trading_enabled
+
+
+def test_market_read_happy_path(enabled, monkeypatch):
+    monkeypatch.setattr(tt, "fetch_ohlc", lambda symbol, **kw: _uptrend())
+    out = json.loads(tt._handle_market_read({"symbol": "btc"}))
+    assert out["symbol"] == "BTC"
+    assert out["lean"] == "bullish"
+    assert out["calibrated"] is False and "UNCALIBRATED" in out["note"]
+    assert {s["name"] for s in out["signals"]} == {"trend", "momentum"}
+
+
+def test_market_read_rejects_symbol_outside_allowlist(enabled, monkeypatch):
+    # Should never even hit the network for a disallowed symbol.
+    def _boom(*a, **k):
+        raise AssertionError("fetch must not be called for a disallowed symbol")
+
+    monkeypatch.setattr(tt, "fetch_ohlc", _boom)
+    out = json.loads(tt._handle_market_read({"symbol": "DOGE"}))
+    assert "error" in out
+
+
+def test_market_read_fails_closed_on_data_error(enabled, monkeypatch):
+    def _raise(symbol, **kw):
+        raise MarketDataError("no route to CoinGecko")
+
+    monkeypatch.setattr(tt, "fetch_ohlc", _raise)
+    out = json.loads(tt._handle_market_read({"symbol": "BTC"}))
+    assert "error" in out and "market data unavailable" in out["error"]
+
+
+def test_market_read_requires_symbol(enabled):
+    out = json.loads(tt._handle_market_read({}))
     assert "error" in out

@@ -18,3 +18,9 @@
 # Web research — Tavily does BOTH search and extract server-side (config overlay
 # sets web.search_backend: tavily), so the agent never fetches arbitrary URLs.
 (^|\.)tavily\.com$
+
+# Market data (Phase 5b step 4a) — CoinGecko public API, READ-ONLY prices for the
+# #trading advisor. Deliberately a DATA-ONLY host: it exposes NO trading/order
+# endpoints, so opening it cannot move money (unlike an exchange host, which we
+# keep denied until the live step). Single host, minimal.
+^api\.coingecko\.com$

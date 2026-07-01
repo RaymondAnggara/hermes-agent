@@ -26,6 +26,7 @@ this implements.
 
 from __future__ import annotations
 
+from plugins.trading.advisor import market_read
 from plugins.trading.confidence import (
     CalibrationBand,
     Signal,
@@ -35,6 +36,15 @@ from plugins.trading.confidence import (
     sigmoid,
 )
 from plugins.trading.executor import FillResult, PaperExecutor, paper_trade
+from plugins.trading.marketdata import (
+    DATA_SOURCE,
+    Candle,
+    MarketDataError,
+    coingecko_id,
+    fetch_ohlc,
+    parse_ohlc,
+)
+from plugins.trading.signals import compute_signals
 from plugins.trading.orders import (
     OrderParseError,
     OrderPlan,
@@ -55,12 +65,15 @@ from plugins.trading.risk_gate import (
 from plugins.trading.store import TradingStore
 
 __all__ = [
+    "DATA_SOURCE",
     "HARD_CEILING",
     "AccountState",
     "CalibrationBand",
+    "Candle",
     "Caps",
     "Decision",
     "FillResult",
+    "MarketDataError",
     "OrderIntent",
     "OrderParseError",
     "OrderPlan",
@@ -70,11 +83,16 @@ __all__ = [
     "TradingStore",
     "calibrate",
     "clamp_caps",
+    "coingecko_id",
+    "compute_signals",
     "confidence_p",
     "confidence_z",
     "est_notional",
+    "fetch_ohlc",
+    "market_read",
     "paper_trade",
     "parse_order",
+    "parse_ohlc",
     "plan_order",
     "risk_gate",
     "sigmoid",
