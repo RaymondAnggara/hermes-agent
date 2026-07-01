@@ -34,6 +34,7 @@ from plugins.trading import (
     fetch_ohlc,
     market_read,
     paper_trade,
+    propose_order,
 )
 from tools.registry import registry, tool_error, tool_result
 
@@ -117,6 +118,15 @@ TRADE_SCHEMA = {
                     "Grammar: <side> <qty> <symbol> <type> [<price>]."
                 ),
             },
+            "prediction_id": {
+                "type": "integer",
+                "description": (
+                    "Optional: the prediction_id returned by a prior propose_trade "
+                    "call, to link this fill to the forecast that motivated it "
+                    "(so the edge measurement can score it). Omit for a manual "
+                    "order not tied to a proposal."
+                ),
+            },
         },
         "required": ["order"],
     },
@@ -138,9 +148,16 @@ def _handle_trade(args: dict, **kwargs: Any) -> str:
             "Set trading.caps in config.yaml."
         )
 
+    prediction_id = (args or {}).get("prediction_id")
+    if prediction_id is not None:
+        try:
+            prediction_id = int(prediction_id)
+        except (TypeError, ValueError):
+            return tool_error("prediction_id must be an integer if provided")
+
     store = TradingStore.open()
     try:
-        result = paper_trade(text, store, caps)
+        result = paper_trade(text, store, caps, prediction_id=prediction_id)
     finally:
         store.close()
 
@@ -239,4 +256,77 @@ registry.register(
     handler=_handle_market_read,
     check_fn=_check_trading_enabled,
     emoji="📊",
+)
+
+
+PROPOSE_TRADE_SCHEMA = {
+    "name": "propose_trade",
+    "description": (
+        "Turn a market read into a PROPOSED paper order for an allowed symbol "
+        "(BTC/ETH): reads the market, and if it leans directionally, proposes a "
+        "conviction-sized LIMIT order (within the risk caps and dry-run through "
+        "the risk gate) and records the forecast (a prediction). This does NOT "
+        "place the order — present the proposal to the operator; only if they "
+        "approve do you then call `trade` with the returned `order` string AND "
+        "`prediction_id`. A neutral read proposes nothing (abstains). Always "
+        "surface the confidence + the UNCALIBRATED caveat; the proposal is "
+        "decision support, and the operator decides."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "symbol": {
+                "type": "string",
+                "description": "The symbol to propose on, e.g. 'BTC' or 'ETH'.",
+            },
+        },
+        "required": ["symbol"],
+    },
+}
+
+
+def _handle_propose_trade(args: dict, **kwargs: Any) -> str:
+    """Read + propose a sized paper order (records the forecast). Places nothing."""
+    symbol = (args or {}).get("symbol")
+    if not symbol or not isinstance(symbol, str):
+        return tool_error("propose_trade requires a 'symbol', e.g. 'BTC'")
+    symbol = symbol.upper().strip()
+
+    caps = _load_caps()
+    if caps is None:
+        return tool_error(
+            "trading caps are not configured (fail-closed) — cannot propose."
+        )
+    if symbol not in caps.allowed_symbols:
+        return tool_error(f"symbol {symbol} not in allowlist {caps.allowed_symbols}")
+
+    try:
+        candles = fetch_ohlc(symbol)
+    except MarketDataError as e:
+        return tool_error(f"market data unavailable: {e}")
+
+    store = TradingStore.open()
+    try:
+        result = propose_order(symbol, candles, store, caps)
+    finally:
+        store.close()
+
+    prop = result.get("proposal")
+    if prop:
+        logger.info(
+            "propose_trade %s: %s %s @ %s (pred %s)",
+            symbol, prop["side"], prop["qty"], prop["price"], result.get("prediction_id"),
+        )
+    else:
+        logger.info("propose_trade %s: no order (%s)", symbol, result.get("reason"))
+    return tool_result(result)
+
+
+registry.register(
+    name="propose_trade",
+    toolset="trading",
+    schema=PROPOSE_TRADE_SCHEMA,
+    handler=_handle_propose_trade,
+    check_fn=_check_trading_enabled,
+    emoji="🧭",
 )

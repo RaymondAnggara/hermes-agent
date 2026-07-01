@@ -50,6 +50,27 @@ def test_paper_fill_is_idempotent_on_replay(store):
     assert store.account_state(now=NOW).positions == {"BTC": pytest.approx(10.0)}
 
 
+def test_fill_links_to_prediction(store):
+    # A prediction (the forecast) links to the trade that acts on it (step 4b).
+    pred_id = store.record_prediction("BTC", 0.5, 0.6, 0.6, "buy")
+    plan = plan_order(parse_order("buy 1 BTC limit 10"), AccountState(), V1_CAPS)
+    fill = PaperExecutor(store).execute(plan, now=NOW, prediction_id=pred_id)
+    row = store.conn.execute(
+        "SELECT prediction_id FROM trades WHERE id = ?", (fill.trade_id,)
+    ).fetchone()
+    assert row["prediction_id"] == pred_id
+
+
+def test_paper_trade_threads_prediction_id(store):
+    pred_id = store.record_prediction("BTC", 0.5, 0.6, 0.6, "buy")
+    r = paper_trade("buy 1 BTC limit 10", store, V1_CAPS, now=NOW, prediction_id=pred_id)
+    assert r["ok"] and r["prediction_id"] == pred_id
+    row = store.conn.execute(
+        "SELECT prediction_id FROM trades WHERE id = ?", (r["trade_id"],)
+    ).fetchone()
+    assert row["prediction_id"] == pred_id
+
+
 def test_paper_trade_full_path_happy(store):
     r = paper_trade("buy 1 BTC limit 10", store, V1_CAPS, now=NOW)
     assert r["ok"] and r["status"] == "filled"

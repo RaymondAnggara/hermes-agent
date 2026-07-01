@@ -60,7 +60,13 @@ class PaperExecutor:
     def __init__(self, store: TradingStore) -> None:
         self.store = store
 
-    def execute(self, plan: OrderPlan, *, now: datetime | None = None) -> FillResult:
+    def execute(
+        self,
+        plan: OrderPlan,
+        *,
+        now: datetime | None = None,
+        prediction_id: int | None = None,
+    ) -> FillResult:
         existing = self.store.trade_by_idempotency_key(plan.plan_id)
         if existing is not None:
             return self._result_from_row(plan, existing, replayed=True)
@@ -74,6 +80,7 @@ class PaperExecutor:
             intent.qty,
             entry_px=fill_px,
             outcome="open",
+            prediction_id=prediction_id,
             idempotency_key=plan.plan_id,
             now=now,
         )
@@ -116,6 +123,7 @@ def paper_trade(
     *,
     resolved_price: float | None = None,
     now: datetime | None = None,
+    prediction_id: int | None = None,
 ) -> dict[str, Any]:
     """Run one order through the FULL paper path and return a structured result.
 
@@ -136,13 +144,14 @@ def paper_trade(
     except RiskRejected as e:
         return {"ok": False, "status": "rejected", "stage": "risk_gate", "reason": e.reason}
 
-    fill = PaperExecutor(store).execute(plan, now=now)
+    fill = PaperExecutor(store).execute(plan, now=now, prediction_id=prediction_id)
     return {
         "ok": True,
         "status": "filled",
         "mode": fill.mode,
         "plan_id": fill.plan_id,
         "trade_id": fill.trade_id,
+        "prediction_id": prediction_id,
         "symbol": fill.symbol,
         "side": fill.side,
         "qty": fill.qty,

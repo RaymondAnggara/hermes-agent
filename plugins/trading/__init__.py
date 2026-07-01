@@ -52,6 +52,7 @@ from plugins.trading.orders import (
     parse_order,
     plan_order,
 )
+from plugins.trading.proposals import propose_order
 from plugins.trading.risk_gate import (
     HARD_CEILING,
     AccountState,
@@ -94,6 +95,7 @@ __all__ = [
     "parse_order",
     "parse_ohlc",
     "plan_order",
+    "propose_order",
     "risk_gate",
     "sigmoid",
 ]

@@ -207,3 +207,68 @@ def test_market_read_fails_closed_on_data_error(enabled, monkeypatch):
 def test_market_read_requires_symbol(enabled):
     out = json.loads(tt._handle_market_read({}))
     assert "error" in out
+
+
+# ---- propose_trade tool ---------------------------------------------------
+
+
+def test_propose_trade_registered_under_trading_toolset():
+    entry = registry.get_entry("propose_trade")
+    assert entry is not None
+    assert entry.toolset == "trading"
+    assert entry.check_fn is tt._check_trading_enabled
+
+
+def test_propose_trade_bullish_proposes_and_records(enabled, monkeypatch):
+    monkeypatch.setattr(tt, "fetch_ohlc", lambda symbol, **kw: _uptrend())
+    out = json.loads(tt._handle_propose_trade({"symbol": "BTC"}))
+    assert out["proposal"] is not None
+    assert out["proposal"]["side"] == "buy"
+    assert out["prediction_id"] is not None
+    # The proposal does NOT place a trade — audit still empty.
+    store = TradingStore.open()
+    try:
+        assert store.recent_trades(10) == []
+    finally:
+        store.close()
+
+
+def test_propose_trade_symbol_outside_allowlist(enabled, monkeypatch):
+    monkeypatch.setattr(tt, "fetch_ohlc", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no fetch")))
+    out = json.loads(tt._handle_propose_trade({"symbol": "DOGE"}))
+    assert "error" in out
+
+
+def test_propose_trade_fails_closed_on_data_error(enabled, monkeypatch):
+    def _raise(symbol, **kw):
+        raise MarketDataError("no route")
+
+    monkeypatch.setattr(tt, "fetch_ohlc", _raise)
+    out = json.loads(tt._handle_propose_trade({"symbol": "BTC"}))
+    assert "error" in out
+
+
+# ---- trade tool: prediction linking ---------------------------------------
+
+
+def test_trade_links_prediction_id(enabled):
+    store = TradingStore.open()
+    try:
+        pred_id = store.record_prediction("BTC", 0.5, 0.6, 0.6, "buy")
+    finally:
+        store.close()
+    out = json.loads(tt._handle_trade({"order": "buy 1 BTC limit 10", "prediction_id": pred_id}))
+    assert out["ok"] and out["prediction_id"] == pred_id
+    store = TradingStore.open()
+    try:
+        row = store.conn.execute(
+            "SELECT prediction_id FROM trades WHERE id = ?", (out["trade_id"],)
+        ).fetchone()
+        assert row["prediction_id"] == pred_id
+    finally:
+        store.close()
+
+
+def test_trade_rejects_non_integer_prediction_id(enabled):
+    out = json.loads(tt._handle_trade({"order": "buy 1 BTC limit 10", "prediction_id": "abc"}))
+    assert "error" in out
