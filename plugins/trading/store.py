@@ -263,6 +263,25 @@ class TradingStore:
         ).fetchone()
         return int(row["n"])
 
+    def list_predictions(self, symbol: str | None = None) -> list[dict[str, Any]]:
+        """All recorded predictions (optionally for one symbol), oldest first.
+
+        The forecast log the edge measurement (step 4c) resolves against later
+        prices. Read-only; append-only table, so this never mutates anything.
+        """
+        if symbol is None:
+            rows = self.conn.execute(
+                "SELECT id, decided_at, symbol, action, z, raw_p, calibrated_p, threshold "
+                "FROM predictions ORDER BY decided_at, id"
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT id, decided_at, symbol, action, z, raw_p, calibrated_p, threshold "
+                "FROM predictions WHERE symbol = ? ORDER BY decided_at, id",
+                (symbol.upper(),),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
     def calibration_bands(self) -> list[dict[str, Any]]:
         """Bands of the highest calibration version (empty until trained)."""
         ver = self.conn.execute("SELECT MAX(version) AS v FROM calibration").fetchone()["v"]

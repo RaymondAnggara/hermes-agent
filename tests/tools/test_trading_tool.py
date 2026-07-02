@@ -272,3 +272,30 @@ def test_trade_links_prediction_id(enabled):
 def test_trade_rejects_non_integer_prediction_id(enabled):
     out = json.loads(tt._handle_trade({"order": "buy 1 BTC limit 10", "prediction_id": "abc"}))
     assert "error" in out
+
+
+# ---- strategy_report tool -------------------------------------------------
+
+
+def test_strategy_report_registered_under_trading_toolset():
+    entry = registry.get_entry("strategy_report")
+    assert entry is not None
+    assert entry.toolset == "trading"
+    assert entry.check_fn is tt._check_trading_enabled
+
+
+def test_strategy_report_no_data_is_honest(enabled, monkeypatch):
+    monkeypatch.setattr(tt, "fetch_ohlc", lambda symbol, **kw: _uptrend())
+    out = json.loads(tt._handle_strategy_report({}))
+    # Fresh book: no predictions → honest no-data overall.
+    assert out["overall"]["n"] == 0
+    assert out["overall"]["edge"] is None
+    assert "per_symbol" in out and set(out["per_symbol"]) == {"BTC", "ETH"}
+
+
+def test_strategy_report_fails_closed_on_data_error(enabled, monkeypatch):
+    def _raise(symbol, **kw):
+        raise MarketDataError("no route")
+    monkeypatch.setattr(tt, "fetch_ohlc", _raise)
+    out = json.loads(tt._handle_strategy_report({}))
+    assert "error" in out

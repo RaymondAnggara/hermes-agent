@@ -35,6 +35,7 @@ from plugins.trading.confidence import (
     confidence_z,
     sigmoid,
 )
+from plugins.trading.daily import record_daily_reads
 from plugins.trading.executor import FillResult, PaperExecutor, paper_trade
 from plugins.trading.marketdata import (
     DATA_SOURCE,
@@ -53,6 +54,10 @@ from plugins.trading.orders import (
     plan_order,
 )
 from plugins.trading.proposals import propose_order
+from plugins.trading.resolution import (
+    resolve_predictions,
+    strategy_report,
+)
 from plugins.trading.risk_gate import (
     HARD_CEILING,
     AccountState,
@@ -107,7 +112,10 @@ __all__ = [
     "parse_ohlc",
     "plan_order",
     "propose_order",
+    "record_daily_reads",
+    "resolve_predictions",
     "risk_gate",
     "score_predictions",
     "sigmoid",
+    "strategy_report",
 ]

@@ -35,6 +35,7 @@ from plugins.trading import (
     market_read,
     paper_trade,
     propose_order,
+    strategy_report,
 )
 from tools.registry import registry, tool_error, tool_result
 
@@ -329,4 +330,57 @@ registry.register(
     handler=_handle_propose_trade,
     check_fn=_check_trading_enabled,
     emoji="🧭",
+)
+
+
+STRATEGY_REPORT_SCHEMA = {
+    "name": "strategy_report",
+    "description": (
+        "Read-only EDGE REPORT: scores the recorded forecasts (predictions) "
+        "against later prices and asks the only question that matters — did "
+        "acting on the signals beat just holding, NET OF FEES? Returns win-rate, "
+        "the strategy's mean return vs buy-and-hold, and the edge (difference), "
+        "per symbol and overall, plus how many predictions are still 'pending' "
+        "(horizon not yet elapsed). Reports honestly: with no resolved "
+        "predictions it says 'no data yet', and small samples are NOT evidence — "
+        "say so. Places nothing; moves no money."
+    ),
+    "parameters": {"type": "object", "properties": {}},
+}
+
+
+def _handle_strategy_report(args: dict, **kwargs: Any) -> str:
+    """Resolve the forecast log vs later prices and report the edge. Read-only."""
+    caps = _load_caps()
+    if caps is None:
+        return tool_error("trading caps are not configured (fail-closed).")
+
+    candles_by_symbol: dict[str, Any] = {}
+    for sym in caps.allowed_symbols:
+        try:
+            candles_by_symbol[sym] = fetch_ohlc(sym)
+        except MarketDataError as e:
+            return tool_error(f"market data unavailable for {sym}: {e}")
+
+    store = TradingStore.open()
+    try:
+        report = strategy_report(store, candles_by_symbol, list(caps.allowed_symbols))
+    finally:
+        store.close()
+
+    ov = report["overall"]
+    logger.info(
+        "strategy_report: n=%s win_rate=%s edge=%s pending=%s",
+        ov.get("n"), ov.get("win_rate"), ov.get("edge"), ov.get("pending"),
+    )
+    return tool_result(report)
+
+
+registry.register(
+    name="strategy_report",
+    toolset="trading",
+    schema=STRATEGY_REPORT_SCHEMA,
+    handler=_handle_strategy_report,
+    check_fn=_check_trading_enabled,
+    emoji="📈",
 )
