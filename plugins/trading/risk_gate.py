@@ -126,11 +126,15 @@ def risk_gate(
 
     Rejects (in order) on: unconfigured/zero caps, an unparseable/non-finite/
     non-positive intent, a symbol outside the allowlist, over per-order notional,
-    over rolling-24h period notional, over per-symbol position, and over the
-    total-exposure ``HARD_CEILING``. Otherwise accepts and reports remaining
-    headroom. Exposure is projected conservatively (every order is treated as
-    adding its notional to exposure), so the gate can only ever be *stricter*
-    than reality — the safe direction for a backstop.
+    over rolling-24h period notional, a sell exceeding the held position (no
+    shorting on spot), over per-symbol position, and over the total-exposure
+    ``HARD_CEILING``. Otherwise accepts and reports remaining headroom.
+
+    Position exposure is direction-aware: a **buy** adds its notional, a **sell**
+    reduces it (and cannot exceed what is held). Turnover (rolling-24h) and the
+    per-order cap apply to both sides. The position projection is a conservative
+    notional approximation (entry-cost basis vs order price) that fails closed —
+    it never opens a short — so the gate remains a safe backstop.
     """
     # 1. Unconfigured = closed. Any missing or non-positive cap rejects all.
     if caps is None:
@@ -187,16 +191,33 @@ def risk_gate(
             f"rolling-24h notional {period_after} > max_period_notional {caps.max_period_notional}"
         )
 
-    # 6. Per-symbol position.
-    projected_symbol = current_symbol_pos + notional
+    # 6. Direction-aware position projection (spot: no shorting).
+    #    A BUY adds its notional to exposure; a SELL reduces it. A sell cannot
+    #    exceed the held position — there is no shorting on spot — which also
+    #    prevents a phantom negative position. (Compared in notional: the position
+    #    is carried at entry cost while the sell is priced at the order price, so
+    #    this is a conservative approximation — it fails closed, never opening a
+    #    short. A future refinement could net in quantity terms.)
+    if intent.side == "sell":
+        if notional > current_symbol_pos:
+            return _reject(
+                f"cannot sell {notional} of {intent.symbol}: exceeds held position "
+                f"{current_symbol_pos} (no shorting on spot)"
+            )
+        projected_symbol = current_symbol_pos - notional
+        projected_total = total_open - notional
+    else:  # buy adds exposure (side already validated to be buy/sell)
+        projected_symbol = current_symbol_pos + notional
+        projected_total = total_open + notional
+
+    # 7. Per-symbol position cap (binds on adds; a reducing sell passes trivially).
     if projected_symbol > caps.max_position_per_symbol:
         return _reject(
             f"projected {intent.symbol} position {projected_symbol} > "
             f"max_position_per_symbol {caps.max_position_per_symbol}"
         )
 
-    # 7. Total-exposure HARD_CEILING backstop.
-    projected_total = total_open + notional
+    # 8. Total-exposure HARD_CEILING backstop.
     if projected_total > caps.hard_ceiling:
         return _reject(
             f"projected total exposure {projected_total} > HARD_CEILING {caps.hard_ceiling}"

@@ -59,11 +59,23 @@ def test_small_qty_order_string_is_plain_decimal(store):
     assert "e-" not in res["proposal"]["order"].lower()
 
 
-def test_bearish_read_proposes_sell(store):
+def test_bearish_read_with_holding_proposes_sell_capped_at_holding(store):
+    # Hold ~$12 of BTC; a bearish read proposes a SELL, never exceeding the holding.
+    store.record_trade("paper", "BTC", "buy", 0.0002, entry_px=60000.0)  # $12 held
     res = propose_order("BTC", _candles(_ramp(200, -2.0)), store, V1_CAPS)
     assert res["proposal"] is not None
     assert res["proposal"]["side"] == "sell"
+    assert res["proposal"]["notional"] <= 12.0 + 1e-6  # capped at what we hold
     assert res["prediction_id"] is not None
+
+
+def test_bearish_read_with_no_holding_abstains_but_records_prediction(store):
+    # Spot: nothing to short. Bearish with no position → abstain, forecast logged.
+    res = propose_order("BTC", _candles(_ramp(200, -2.0)), store, V1_CAPS)
+    assert res["proposal"] is None
+    assert "no BTC position to trim" in res["reason"]
+    assert res["prediction_id"] is not None
+    assert _npredictions(store) == 1
 
 
 def test_neutral_read_abstains_and_records_nothing(store):

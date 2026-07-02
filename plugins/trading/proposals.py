@@ -21,6 +21,7 @@ Honest by construction:
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
@@ -40,8 +41,12 @@ DIRECTIONAL_THRESHOLD = 0.55
 _QTY_DECIMALS = 6
 
 
-def _round_qty(qty: float) -> float:
-    return round(qty, _QTY_DECIMALS)
+def _floor_qty(qty: float) -> float:
+    """Floor to the qty precision so the notional never rounds *up* past the
+    sized target — a rounded-up sell could exceed the held position (tripping the
+    no-short guard), and a rounded-up buy could breach the per-order cap."""
+    scale = 10 ** _QTY_DECIMALS
+    return math.floor(qty * scale) / scale
 
 
 def _fmt(x: float) -> str:
@@ -88,7 +93,7 @@ def propose_order(
 
     side = "buy" if lean == "bullish" else "sell"
     # Record the forecast first — a directional call is logged even if we can't
-    # fund the order, so calibration (4c) sees every prediction.
+    # act on it, so calibration (4c) sees every prediction.
     prediction_id = (
         store.record_prediction(
             symbol,
@@ -103,14 +108,23 @@ def propose_order(
         else None
     )
 
+    account = store.account_state(now=now)
+    held = account.positions.get(symbol, 0.0)
+    # Spot has no shorting: a bearish call is only actionable if we hold the
+    # symbol (a sell trims the position). With nothing to trim, abstain — the
+    # forecast is still recorded above.
+    if side == "sell" and held <= 0.0:
+        return {"proposal": None, "prediction_id": prediction_id, "reason": f"bearish, but no {symbol} position to trim (spot has no shorting)", "read": read}
+
     conviction = _conviction(read["confidence_p"])
     target_notional = min(caps.max_order_notional, max(MIN_PROPOSAL_NOTIONAL, caps.max_order_notional * conviction))
-    qty = _round_qty(target_notional / last)
+    if side == "sell":
+        target_notional = min(target_notional, held)  # never propose selling more than held
+    qty = _floor_qty(target_notional / last)
     if qty <= 0.0:
         return {"proposal": None, "prediction_id": prediction_id, "reason": "sized quantity rounds to zero", "read": read}
 
     intent = OrderIntent(side=side, symbol=symbol, qty=qty, price=last, order_type="limit")
-    account = store.account_state(now=now)
     try:
         plan = plan_order(intent, account, caps)
     except RiskRejected as e:

@@ -115,6 +115,45 @@ def test_total_exposure_ceiling_fires_before_other_caps_pass():
     assert "HARD_CEILING" in d.reason or "total exposure" in d.reason
 
 
+# --- direction-aware position (spot: sell reduces, no shorting) ---
+
+
+def test_sell_reduces_position_and_is_accepted():
+    # Hold 30 BTC; a sell of 10 reduces to 20 — accepted, more headroom than a buy.
+    acct = AccountState(positions={"BTC": 30.0}, rolling_24h_notional=0.0)
+    d = risk_gate(_order(qty=1.0, price=10.0, side="sell"), acct, V1_CAPS)
+    assert d.accepted
+    assert d.caps_after["symbol_remaining"] == pytest.approx(20.0)  # 40 - (30-10)
+    assert d.caps_after["total_remaining"] == pytest.approx(70.0)  # 90 - (30-10)
+
+
+def test_sell_frees_headroom_when_symbol_at_cap():
+    # BTC pinned AT the per-symbol cap: a buy is blocked, but a sell (exit) is fine.
+    acct = AccountState(positions={"BTC": 40.0}, rolling_24h_notional=0.0)
+    assert not risk_gate(_order(qty=1.0, price=10.0, side="buy"), acct, V1_CAPS).accepted
+    assert risk_gate(_order(qty=1.0, price=10.0, side="sell"), acct, V1_CAPS).accepted
+
+
+def test_sell_exceeding_held_position_rejected_no_shorting():
+    acct = AccountState(positions={"BTC": 5.0}, rolling_24h_notional=0.0)
+    d = risk_gate(_order(qty=1.0, price=10.0, side="sell"), acct, V1_CAPS)  # sell 10 > held 5
+    assert not d.accepted
+    assert "shorting" in d.reason or "exceeds held" in d.reason
+
+
+def test_sell_with_no_holding_rejected():
+    d = risk_gate(_order(qty=1.0, price=10.0, side="sell"), EMPTY, V1_CAPS)
+    assert not d.accepted
+
+
+def test_sell_still_counts_toward_turnover():
+    # Turnover (rolling-24h) applies to both sides: a sell is still activity.
+    acct = AccountState(positions={"BTC": 50.0}, rolling_24h_notional=95.0)
+    d = risk_gate(_order(qty=1.0, price=10.0, side="sell"), acct, V1_CAPS)  # +10 turnover → 105 > 100
+    assert not d.accepted
+    assert "max_period_notional" in d.reason
+
+
 @pytest.mark.parametrize("qty", [0.0, -1.0, math.inf, math.nan])
 def test_bad_qty_rejected(qty):
     assert not risk_gate(_order(qty=qty), EMPTY, V1_CAPS).accepted
