@@ -63,6 +63,13 @@ from plugins.trading.risk_gate import (
     est_notional,
     risk_gate,
 )
+from plugins.trading.scoring import (
+    ScoreReport,
+    buy_and_hold_return,
+    directional_return,
+    net_return,
+    score_predictions,
+)
 from plugins.trading.store import TradingStore
 
 __all__ = [
@@ -80,22 +87,27 @@ __all__ = [
     "OrderPlan",
     "PaperExecutor",
     "RiskRejected",
+    "ScoreReport",
     "Signal",
     "TradingStore",
+    "buy_and_hold_return",
     "calibrate",
     "clamp_caps",
     "coingecko_id",
     "compute_signals",
     "confidence_p",
     "confidence_z",
+    "directional_return",
     "est_notional",
     "fetch_ohlc",
     "market_read",
+    "net_return",
     "paper_trade",
     "parse_order",
     "parse_ohlc",
     "plan_order",
     "propose_order",
     "risk_gate",
+    "score_predictions",
     "sigmoid",
 ]
